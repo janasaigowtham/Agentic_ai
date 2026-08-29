@@ -1,0 +1,12 @@
+name: pmi_ddn_fetch_investor_data
+agent_class: database_agent
+output_key: pmi_ddn_investor_data
+input_keys: [loan_number]
+default_db_yaml:
+  type: postgres
+  connection:
+    url: ${ENV:INVESTOR_DB_CONN}
+  query: >
+    SELECT investor_id, investor_name
+    FROM investor_master
+    WHERE loan_number = :loan_number

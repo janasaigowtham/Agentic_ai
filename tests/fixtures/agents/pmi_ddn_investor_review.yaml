@@ -1,0 +1,8 @@
+name: pmi_ddn_investor_review
+agent_class: transformation_agent
+input_keys: [pmi_ddn_investor_flag]
+transform:
+  pmi_ddn_investor_review_note:
+    $fn: note_review
+    args:
+      source: '{{ pmi_ddn_investor_flag }}'

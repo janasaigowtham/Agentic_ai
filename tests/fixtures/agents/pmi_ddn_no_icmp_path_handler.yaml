@@ -1,0 +1,9 @@
+name: pmi_ddn_no_icmp_path_handler
+agent_class: transformation_agent
+input_keys: [pmi_ddn_msp_loan_data]
+output_key: pmi_ddn_icmp_skipped_result
+transform:
+  pmi_ddn_icmp_skipped_result:
+    $fn: build_skip_result
+    args:
+      source: '{{ pmi_ddn_msp_loan_data[0].inv_class_code }}'

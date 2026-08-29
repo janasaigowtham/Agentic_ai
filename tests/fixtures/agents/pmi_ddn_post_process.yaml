@@ -1,0 +1,7 @@
+name: pmi_ddn_post_process
+agent_class: SequentialAgent
+description: Synthesizes QA answers into the final verdict.
+sub_agents:
+  - name: pmi_ddn_qa_q25527
+  - name: pmi_ddn_verdict_synthesizer
+  - name: pmi_ddn_investor_review_router

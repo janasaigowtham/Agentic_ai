@@ -1,0 +1,13 @@
+name: pmi_ddn_fetch_msp_loan_data
+agent_class: database_agent
+output_key: pmi_ddn_msp_loan_data
+input_keys: [loan_number]
+default_db_yaml: |
+  type: teradata
+  connection:
+    url: ${ENV:ECRM_DB_CONN}
+  query: >
+    SELECT M7.LN_NO, TRIM(M7.INV_CLASS_CODE) AS inv_class_code,
+           M7.LETTER_EFFECTIVE_DATE AS letter_effective_date
+    FROM MSP_LOAN_MASTER7_CS M7
+    WHERE M7.LN_NO = LPAD(TRIM(CAST(:loan_number AS VARCHAR(10))), 10, '0')

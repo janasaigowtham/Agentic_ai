@@ -1,0 +1,10 @@
+name: pmi_ddn_pre_process
+agent_class: SequentialAgent
+description: Fetches loan and investor data and computes derived flags.
+sub_agents:
+  - name: pmi_ddn_fetch_msp_loan_data
+  - name: pmi_ddn_fetch_investor_data
+  - name: pmi_ddn_icmp_required_flag
+  - name: pmi_ddn_investor_flag
+  - name: pmi_ddn_answer_q25527
+  - name: pmi_ddn_investor_score

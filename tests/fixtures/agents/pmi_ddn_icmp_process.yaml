@@ -1,0 +1,9 @@
+name: pmi_ddn_icmp_process
+agent_class: transformation_agent
+input_keys: [pmi_ddn_msp_loan_data]
+output_key: pmi_ddn_icmp_result
+transform:
+  pmi_ddn_icmp_result:
+    $fn: build_icmp_result
+    args:
+      source: '{{ pmi_ddn_msp_loan_data[0].inv_class_code }}'

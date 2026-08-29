@@ -1,0 +1,11 @@
+name: pmi_ddn_investor_review_router
+agent_class: decision_router_agent
+routes:
+  - conditions:
+      - context_key: pmi_ddn_investor_flag
+        operator: neq
+        value: SKIP
+    target_agent: pmi_ddn_investor_review
+    priority: 10
+sub_agents:
+  - name: pmi_ddn_investor_review

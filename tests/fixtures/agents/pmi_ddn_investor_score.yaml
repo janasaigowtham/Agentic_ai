@@ -1,0 +1,9 @@
+name: pmi_ddn_investor_score
+agent_class: transformation_agent
+input_keys: [pmi_ddn_investor_data]
+output_key: pmi_ddn_investor_score
+transform:
+  pmi_ddn_investor_score:
+    $fn: score_investor
+    args:
+      source: '{{ pmi_ddn_investor_data[0].investor_id }}'

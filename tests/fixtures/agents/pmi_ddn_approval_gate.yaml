@@ -1,0 +1,4 @@
+name: pmi_ddn_approval_gate
+agent_class: agent_gate
+description: Pauses for external approval before finalizing.
+input_keys: [pmi_ddn_icmp_result]
