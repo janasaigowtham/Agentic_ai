@@ -1,0 +1,78 @@
+# Declarative pipeline definition - see course/05-multi-agent-orchestration.md.
+# The engine (agent_framework.py) only knows how to execute agent_class
+# values; every bit of "this is about customer support" meaning lives here.
+name: support_triage_orchestrator
+agent_class: orchestrator
+output_key: final_reply
+sub_agents:
+  - name: lookup_order_step
+    agent_class: tool_agent
+    tool: lookup_order
+    input_keys: [order_id]
+    output_key: order
+
+  - name: classify_intent
+    agent_class: llm_agent
+    instruction: "classify: {message}"
+    input_keys: [message]
+    output_key: intent
+
+  - name: intent_router
+    agent_class: router_agent
+    output_key: chosen_target
+    routes:
+      - conditions:
+          - context_key: intent
+            operator: eq
+            value: refund
+        target_agent: refund_flow
+        priority: 10
+      - conditions:
+          - context_key: intent
+            operator: eq
+            value: technical
+        target_agent: technical_flow
+        priority: 20
+      - conditions: []  # catch-all: anything not matched above lands here,
+                        # see course/05-multi-agent-orchestration.md's
+                        # "always have a catch-all" rule
+        target_agent: general_flow
+        priority: 30
+    sub_agents:
+      - name: refund_flow
+        agent_class: sequential_agent
+        sub_agents:
+          - name: calc_refund
+            agent_class: transform_agent
+            transform: calc_refund
+            input_keys: [order, message]
+            output_key: refund_amount
+
+          - name: refund_gate
+            agent_class: gate_agent
+            input_keys: [refund_amount]
+            output_key: refund_approved
+
+          - name: draft_refund_reply
+            agent_class: llm_agent
+            instruction: "draft a reply for intent refund"
+            input_keys: [intent, refund_amount, order]
+            output_key: final_reply
+
+      - name: technical_flow
+        agent_class: sequential_agent
+        sub_agents:
+          - name: draft_technical_reply
+            agent_class: llm_agent
+            instruction: "draft a reply for intent technical"
+            input_keys: [intent]
+            output_key: final_reply
+
+      - name: general_flow
+        agent_class: sequential_agent
+        sub_agents:
+          - name: draft_general_reply
+            agent_class: llm_agent
+            instruction: "draft a reply for intent general"
+            input_keys: [intent]
+            output_key: final_reply
