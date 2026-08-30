@@ -1,0 +1,4 @@
+pyyaml>=6.0
+pytest>=7.0
+# optional, only needed if you set AGENT_COURSE_LLM=anthropic
+# anthropic>=0.40.0
