@@ -26,12 +26,17 @@ def test_list_and_get_trajectory(tmp_path):
     resp = client.get("/api/trajectories")
     assert resp.status_code == 200
     trajectories = resp.json()
-    assert len(trajectories) == 1
-    trajectory_id = trajectories[0]["trajectory_id"]
+    assert len(trajectories) == 5
 
-    detail = client.get(f"/api/trajectories/{trajectory_id}")
+    seeded = next(t for t in trajectories if t["trajectory_id"] == "trace-fixture-0000000000000001")
+    detail = client.get(f"/api/trajectories/{seeded['trajectory_id']}")
     assert detail.status_code == 200
     assert len(detail.json()["steps"]) == 17
+
+    synthetic = next(t for t in trajectories if t["trajectory_id"] == "synthetic-1234567890")
+    synthetic_detail = client.get(f"/api/trajectories/{synthetic['trajectory_id']}")
+    assert synthetic_detail.status_code == 200
+    assert len(synthetic_detail.json()["steps"]) == 16
 
 
 def test_get_trajectory_404_for_unknown_id(tmp_path):

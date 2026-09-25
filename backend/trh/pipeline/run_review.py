@@ -9,11 +9,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from trh.capture.simulate import DEFAULT_BYPASSED_CLASSES, load_and_capture
+from trh.config import HarnessConfig
 from trh.core.graph import load_pipeline
 from trh.core.harness_models import CaseSummary, Recommendation, Trajectory, Verdict
+from trh.fixtures_registry import TrajectorySource, load_trajectory_from_source
 from trh.judge.client import build_judge_clients, client_for_stage
-from trh.config import HarnessConfig
 from trh.pipeline.aggregator import run_aggregator
 from trh.pipeline.evidence_assembly import assemble_evidence
 from trh.pipeline.fact_check import FactCheckResult, run_fact_check
@@ -32,18 +32,10 @@ class ReviewResult:
     stage_lineage_used: dict[str, str]
 
 
-def run_review(
-    trace_path: str,
-    agent_dir: str,
-    pipeline_name: str,
-    config: HarnessConfig,
-    bypassed_classes: frozenset[str] = DEFAULT_BYPASSED_CLASSES,
-) -> ReviewResult:
-    graph = load_pipeline(agent_dir, pipeline_name)
-    _, captured = load_and_capture(trace_path, bypassed_classes)
-    trajectory = assemble_trajectory(
-        captured[0].span.trace_id if captured else "unknown-trace", pipeline_name, captured, graph
-    )
+def run_review(source: TrajectorySource, config: HarnessConfig) -> ReviewResult:
+    graph = load_pipeline(source.agent_dir, source.pipeline_name)
+    _, captured = load_trajectory_from_source(source, graph)
+    trajectory = assemble_trajectory(source.trajectory_id, source.pipeline_name, captured, graph)
     assemble_evidence(trajectory, graph)
 
     clients = build_judge_clients(config)

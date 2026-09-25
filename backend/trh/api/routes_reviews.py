@@ -26,7 +26,7 @@ def _run_and_persist(db_path: str, review_id: str, source: TrajectorySource) -> 
     try:
         store.update_review_status(conn, review_id, "running")
         config = load_config()
-        result = run_review(source.trace_path, source.agent_dir, source.pipeline_name, config)
+        result = run_review(source, config)
         store.save_review_result(conn, review_id, result)
     except Exception as exc:  # surfaced through polling, never raised back to the caller
         store.update_review_status(conn, review_id, "failed", error=str(exc))

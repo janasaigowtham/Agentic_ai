@@ -9,10 +9,9 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 
-from trh.capture.simulate import load_and_capture
 from trh.core.graph import load_pipeline
 from trh.core.harness_models import Trajectory
-from trh.fixtures_registry import TRAJECTORY_SOURCES, TrajectorySource
+from trh.fixtures_registry import TRAJECTORY_SOURCES, TrajectorySource, load_trajectory_from_source
 from trh.pipeline.evidence_assembly import assemble_evidence
 from trh.pipeline.trajectory_assembler import assemble_trajectory
 
@@ -21,7 +20,7 @@ router = APIRouter(prefix="/api/trajectories", tags=["trajectories"])
 
 def _assemble(source: TrajectorySource) -> Trajectory:
     graph = load_pipeline(source.agent_dir, source.pipeline_name)
-    _, captured = load_and_capture(source.trace_path)
+    _, captured = load_trajectory_from_source(source, graph)
     trajectory = assemble_trajectory(source.trajectory_id, source.pipeline_name, captured, graph)
     assemble_evidence(trajectory, graph)
     return trajectory

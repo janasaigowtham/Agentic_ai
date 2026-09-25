@@ -1,12 +1,9 @@
-from pathlib import Path
-
 from trh.config import HarnessConfig, JudgeMode
 from trh.core.harness_models import VerdictSeverity
+from trh.fixtures_registry import TRAJECTORY_SOURCES
 from trh.pipeline.run_review import run_review
 
-FIXTURES_DIR = Path(__file__).resolve().parent.parent / "fixtures"
-AGENT_DIR = FIXTURES_DIR / "agents"
-TRACE_PATH = FIXTURES_DIR / "trace.jsonl"
+SEEDED_SOURCE = TRAJECTORY_SOURCES["trace-fixture-0000000000000001"]
 
 
 def _mock_config() -> HarnessConfig:
@@ -14,7 +11,7 @@ def _mock_config() -> HarnessConfig:
 
 
 def _run():
-    return run_review(str(TRACE_PATH), str(AGENT_DIR), "pmi_ddn_pipeline", _mock_config())
+    return run_review(SEEDED_SOURCE, _mock_config())
 
 
 def test_run_review_produces_case_summary_and_lineage_all_mock():

@@ -20,8 +20,9 @@ around it.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
-from trh.core.models import Run, Span
+from trh.core.models import PipelineGraph, Run, Span
 from trh.core.trace import build_run, load_jsonl
 
 TAP_A = "a"
@@ -60,5 +61,31 @@ def load_and_capture(
 ) -> tuple[Run, list[CapturedSpan]]:
     """Loads a recorded trace.jsonl and replays it through simulated capture."""
     span_dicts = load_jsonl(trace_path)
+    run = build_run(span_dicts)
+    return run, simulate_capture(run, bypassed_classes)
+
+
+def generate_and_capture(
+    trajectory_id: str,
+    loan_number: str,
+    graph: PipelineGraph,
+    bypassed_classes: frozenset[str] = DEFAULT_BYPASSED_CLASSES,
+    extra_session: dict[str, Any] | None = None,
+) -> tuple[Run, list[CapturedSpan]]:
+    """Actually executes the declared pipeline against mocked source systems
+    and synthetic seed data (trh.execution.*), instead of replaying a
+    pre-recorded trace. Produces a real Run the same way load_and_capture
+    does, so both trajectory sources feed the rest of the harness identically.
+    """
+    from trh.execution.executor import Executor
+    from trh.execution.synthetic_data import LOAN_SCENARIOS, build_mock_database
+
+    scenario = LOAN_SCENARIOS[loan_number]
+    db = build_mock_database()
+    executor = Executor(mock_db=db, gate_duration_s=scenario.gate_duration_s)
+    initial_session: dict[str, Any] = {"loan_number": loan_number}
+    if extra_session:
+        initial_session.update(extra_session)
+    span_dicts = executor.run(graph, initial_session=initial_session, trace_id=trajectory_id)
     run = build_run(span_dicts)
     return run, simulate_capture(run, bypassed_classes)

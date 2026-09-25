@@ -1,15 +1,12 @@
-from pathlib import Path
-
 import pytest
 
 from trh.config import HarnessConfig, JudgeMode
 from trh.core.harness_models import GateDecisionValue, RecommendationStatus
 from trh.db import store
+from trh.fixtures_registry import TRAJECTORY_SOURCES
 from trh.pipeline.run_review import run_review
 
-FIXTURES_DIR = Path(__file__).resolve().parent.parent / "fixtures"
-AGENT_DIR = FIXTURES_DIR / "agents"
-TRACE_PATH = FIXTURES_DIR / "trace.jsonl"
+SEEDED_SOURCE = TRAJECTORY_SOURCES["trace-fixture-0000000000000001"]
 
 
 @pytest.fixture
@@ -23,7 +20,7 @@ def conn(tmp_path):
 @pytest.fixture
 def review_result():
     config = HarnessConfig(mode=JudgeMode.MOCK, gemini_api_key=None, anthropic_api_key=None)
-    return run_review(str(TRACE_PATH), str(AGENT_DIR), "pmi_ddn_pipeline", config)
+    return run_review(SEEDED_SOURCE, config)
 
 
 def test_create_and_update_review_status(conn):
