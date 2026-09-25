@@ -1,0 +1,9 @@
+name: pmi_ddn_answer_q25527
+agent_class: transformation_agent
+input_keys: [pmi_ddn_msp_loan_data]
+output_key: pmi_ddn_answer_q25527
+transform:
+  pmi_ddn_answer_q25527:
+    $fn: extract_field
+    args:
+      source: '{{ pmi_ddn_msp_loan_data[0].inv_class_code }}'

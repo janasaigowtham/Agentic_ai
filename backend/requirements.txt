@@ -1,0 +1,8 @@
+pyyaml>=6.0
+fastapi>=0.110
+uvicorn[standard]>=0.27
+pydantic>=2.5
+pytest>=7.4
+httpx>=0.26
+google-genai>=0.3
+anthropic>=0.34

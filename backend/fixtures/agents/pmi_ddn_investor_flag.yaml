@@ -1,0 +1,12 @@
+name: pmi_ddn_investor_flag
+agent_class: slv_transformation_agent
+input_keys: [pmi_ddn_investor_data]
+output_key: pmi_ddn_investor_flag
+transform:
+  pmi_ddn_investor_flag:
+    $cond:
+      if:
+        left: '{{ pmi_ddn_investor_data[0].investor_id }}'
+        op: not_null
+      then: Y
+      else: N
