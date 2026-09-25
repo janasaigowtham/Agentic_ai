@@ -30,7 +30,13 @@ _SCHEMA_PATH = Path(__file__).resolve().parent / "schema.sql"
 
 
 def connect(db_path: str) -> sqlite3.Connection:
-    conn = sqlite3.connect(db_path)
+    # FastAPI offloads sync routes (and their generator dependencies) to a
+    # worker thread pool; a request's connection setup and teardown aren't
+    # guaranteed to land on the same pool thread, which sqlite3 rejects by
+    # default. Each connection here is still only ever used by one logical
+    # request/background-task flow at a time, so disabling the same-thread
+    # check is safe.
+    conn = sqlite3.connect(db_path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.executescript(_SCHEMA_PATH.read_text())
