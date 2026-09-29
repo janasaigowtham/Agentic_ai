@@ -301,3 +301,85 @@ def test_generate_refuses_to_clobber(tmp_path):
     (out / "old.yaml").write_text("name: old\n")
     with pytest.raises(FileExistsError):
         generate(FIX / "procedure_sample.md", out, make_cfg(), make_fake())
+
+
+# ---------------------------------------------------------------- procedure tree
+
+def test_procedure_sections_follow_headings_in_order():
+    from o2a_gen.proctree import parse_sections, section_docs
+    text = (FIX / "procedure_sample.md").read_text()
+    root = parse_sections(text, "sample")
+    titles = [s.title for s in root.walk()][1:]
+    assert titles == ["Preamble", "1. Pre-process", "2. ICMP check", "3. Approval", "4. Post-process"]
+    pre = root.children[1]
+    lines = text.splitlines()
+    assert lines[pre.start - 1] == "## 1. Pre-process"
+    assert lines[pre.own_start - 1].startswith("1. Pull the loan from MSP")
+    assert all(d.id.startswith("p") for d in section_docs(root))
+
+
+def test_procedure_tree_links_sections_to_catalog(tmp_path):
+    from o2a_gen.proctree import build_procedure_tree
+    cat_dir = tmp_path / "cat"
+    compile_catalog(FIX / "catalog_src", cat_dir, make_fake(), make_cfg("native"))
+    cat = Catalog(cat_dir)
+    cfg = make_cfg()
+    tree = build_procedure_tree(make_fake(), (FIX / "procedure_sample.md").read_text(), "sample",
+                                tmp_path / "proc", models=cfg.models, embedding=cfg.embedding,
+                                catalog_root=cat_dir, catalog_index=cat.index)
+    skills = tmp_path / "proc" / ".claude" / "skills" / "procedure"
+    assert sorted(p.name for p in skills.iterdir() if p.is_dir()) == [
+        "01-preamble", "02-1-pre-process", "03-2-icmp-check", "04-3-approval", "05-4-post-process"]
+    pre = tree.doc_for_line(8)
+    assert pre.section.title == "1. Pre-process"
+    # embeddings link the lookup section to the table it needs, never to agent syntax
+    top3 = [cat.index[c]["name"] for c, _ in tree.hints[pre.id][:3]]
+    assert "MSP_LOAN_MASTER7_CS" in top3
+    assert all(cat.index[c]["kind"] != "schema" for c, _ in tree.hints[pre.id])
+    assert tree.related[pre.id] and all(r != pre.id for r, _ in tree.related[pre.id])
+    index_md = (skills / "02-1-pre-process" / "INDEX.md").read_text()
+    assert "## Likely tools & data" in index_md and "MSP_LOAN_MASTER7_CS" in index_md
+    ctx = tree.context_for_line(8, cat.index)
+    assert "procedure/02-1-pre-process" in ctx and "MSP_LOAN_MASTER7_CS" in ctx
+
+
+def test_saved_vectors_ignored_for_a_different_embedding_model(tmp_path):
+    from o2a_gen.skilltree import load_vectors
+    compile_catalog(FIX / "catalog_src", tmp_path, make_fake(), make_cfg("native"))
+    assert load_vectors(tmp_path, {"provider": "llm", "model": "fake-embed"}) is not None
+    assert load_vectors(tmp_path, {"provider": "llm", "model": "other-model"}) is None
+
+
+def test_generate_grounds_each_step_in_its_procedure_section(compiled_catalog, tmp_path):
+    fake = make_fake()
+    rep = generate(FIX / "procedure_sample.md", tmp_path / "p", make_cfg(), fake,
+                   catalog_dir=compiled_catalog)
+    assert rep["errors"] == 0
+    assert rep["procedure_tree"]["sections"] == 5
+    assert all(g["procedure_section"].startswith("procedure/") for g in rep["grounding"])
+    nav_first = [c["messages"][0]["content"] for c in fake.calls
+                 if c["system"].startswith("You are looking up")]
+    assert all("procedure/" in m for m in nav_first)          # procedure folder is browsable
+    extract = next(c for c in fake.calls if c["system"].startswith("You convert an operations"))
+    assert "Section outline" in extract["messages"][0]["content"]
+    db = next(c["messages"][0]["content"] for c in fake.calls
+              if c["system"].startswith("You write the fields") and "(database_agent)" in
+              c["messages"][0]["content"])
+    assert "This step is in procedure section `procedure/02-1-pre-process`" in db
+
+
+def test_generate_can_skip_procedure_compile(compiled_catalog, tmp_path):
+    rep = generate(FIX / "procedure_sample.md", tmp_path / "p",
+                   make_cfg(compile_procedure=False), make_fake(), catalog_dir=compiled_catalog)
+    assert rep["procedure_tree"] is None and rep["errors"] == 0
+
+
+def test_extract_rejects_citations_outside_the_procedure():
+    from o2a_gen.procedure import extract_procedure
+    bad = json.loads(json.dumps(PROCEDURE_JSON))
+    bad["phases"][3]["steps"][0]["source_lines"] = "22"   # the sample has 20 lines
+    replies = iter([bad, PROCEDURE_JSON])
+    fake = FakeLLM(default=lambda s, m: next(replies))
+    proc = extract_procedure(fake, (FIX / "procedure_sample.md").read_text(), model="m")
+    assert proc.all_steps()[-1].source_lines == "20"
+    assert "between 1 and 20" in fake.calls[1]["messages"][-1]["content"]

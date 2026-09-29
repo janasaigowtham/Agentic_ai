@@ -16,12 +16,15 @@ how close the generated set is (`--compare-with`, or `compare`).
 
 ```
                       agent syntax ┐
- metadata, tools, reference docs ──┴─► compile-catalog ─► skill tree (browsable folders)
-                                                               │
- procedure ─► 1 extract steps ─► 2 plan agents ─► 3 write each agent ─► 4 YAMLs ─► 5 validate ─► 6 compare
-              (LLM)              (no LLM)         (browse the tree for          (static checks   (only if existing
-                                                   metadata/tools + the class's  + agent syntax)  YAMLs are given)
-                                                   syntax section, then LLM)
+ metadata, tools, reference docs ──┴─► compile-catalog ─► catalog skill tree (+ saved vectors)
+                                                               │                  │
+ procedure ─► 1 compile procedure ─► procedure skill tree ◄────┼── similarity ────┘
+              (sections by heading,   (summaries, related      │   (likely tools & data
+               LLM summary, embed)     sections, hints)        │    per section)
+                    │                        │                 │
+                    └► 2 extract steps ─► 3 plan ─► 4 ground ◄─┘ ─► 5 write YAMLs ─► 6 validate ─► compare
+                       (LLM, whole text   (no LLM)  (browse procedure section +                   (only if existing
+                        + outline)                   catalog, class syntax, LLM)                   YAMLs are given)
 ```
 
 Every LLM call goes through **one file you control** (`providers/tachyon_provider.py`), so it
@@ -29,17 +32,29 @@ runs on Tachyon with the models you choose.
 
 ## The technique (compile, then navigate)
 
-This follows the Corpus2Skill approach: instead of pasting everything into one prompt or using
-a vector search, the inputs are **compiled** into a folder tree with a summary at each level, and
-the model **navigates** it (read a folder summary, open a sub-folder, fetch a document) to find
-what each step needs.
+This follows the Corpus2Skill approach. **The procedure is the corpus**: it is embedded and
+summarised into a skill tree, and the question answered for each of its steps is "what agent
+YAML implements this step?". The **tools, metadata and agent syntax** are the knowledge the
+answer is built from, compiled into a second tree.
 
-- `compile-catalog` builds the tree from the agent syntax, metadata, tools and reference docs.
-- While writing each agent, `navigator.py` browses the tree for that step's tables, connection
-  and tools. It sends one JSON action per turn, so any chat model works, and nothing is uploaded.
-- The **agent-syntax section for the agent's class is always included** directly (not left to
-  navigation), since every agent must follow it. The validator also checks every generated field
-  against it.
+- **Procedure tree** (`proctree.py`, at generate time). The procedure is split into sections
+  by its own headings, **in document order**. Order is the workflow, so it is not re-clustered.
+  The LLM summarises each section bottom-up, and each section is embedded. The embeddings add
+  what headings can't:
+  - **related sections**: the most similar other parts of the procedure (definitions,
+    appendices, rules stated elsewhere);
+  - **likely tools & data**: the catalog's metadata, tools and reference documents most
+    similar to the section, using the catalog's saved vectors.
+- **Catalog tree** (`compile-catalog`): built from the agent syntax, metadata, tools and
+  reference docs. It is grouped by kind, then by embedding similarity, and summarised.
+- **Extraction** reads the whole procedure, so no step can be missed, plus the section outline.
+- **Grounding**: for each step, the navigator browses one combined tree (`procedure/` plus the
+  catalog folders). It starts from the step's own procedure section, its related sections and its
+  likely tools & data, and fetches the actual documents before using them. The **agent-syntax
+  section for the agent's class is always included** directly, and the validator checks every
+  generated field against it.
+- Similarity hints are suggestions: the model still opens the documents, and every answer is
+  checked before it is accepted.
 
 Two interchangeable engines build the tree (`catalog.engine`):
 
@@ -112,8 +127,9 @@ Output:
 | File | What it is |
 |---|---|
 | `generated/pmi_ddn/*.yaml` | one agent per file, each headed by the procedure step and lines it came from |
+| `generated/pmi_ddn_procedure/` | the compiled procedure tree: sections, summaries, related sections, likely tools & data (`procedure_links.json`) |
 | `generated/pmi_ddn_steps.json` | the steps as extracted from the procedure, to check the reading was right |
-| `generated/pmi_ddn_report.json` | step → agent coverage, which catalog docs grounded each agent, gaps the model reported, validation findings, LLM usage, and `comparison` if `--compare-with` was given |
+| `generated/pmi_ddn_report.json` | step → agent coverage, each step's procedure section, which catalog docs grounded each agent, gaps the model reported, validation findings, LLM usage, and `comparison` if `--compare-with` was given |
 
 Exit code is 1 if validation found errors.
 

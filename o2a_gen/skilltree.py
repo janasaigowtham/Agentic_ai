@@ -323,6 +323,27 @@ def write_tree(root: Node, out_dir: Path, docs: list[CatalogDoc], cards: dict[st
 
 
 # --------------------------------------------------------------------------
+# saved vectors (reused at generate time to link procedure sections to the catalog)
+# --------------------------------------------------------------------------
+
+def save_vectors(out_dir: Path, ids: list[str], matrix: np.ndarray, embedding: dict) -> None:
+    np.save(out_dir / "vectors.npy", np.asarray(matrix, dtype=np.float32))
+    (out_dir / "vectors.json").write_text(json.dumps(
+        {"ids": ids, "provider": embedding.get("provider"), "model": embedding.get("model")}))
+
+
+def load_vectors(root: Path, embedding: dict) -> tuple[list[str], np.ndarray] | None:
+    """Saved catalog vectors, if they were made with the same embedding model."""
+    meta_path, arr_path = Path(root) / "vectors.json", Path(root) / "vectors.npy"
+    if not (meta_path.exists() and arr_path.exists()):
+        return None
+    meta = json.loads(meta_path.read_text())
+    if (meta.get("provider"), meta.get("model")) != (embedding.get("provider"), embedding.get("model")):
+        return None
+    return meta["ids"], np.load(arr_path)
+
+
+# --------------------------------------------------------------------------
 # entry point
 # --------------------------------------------------------------------------
 
@@ -339,7 +360,9 @@ def build_skill_tree(client: LLMClient, docs: list[CatalogDoc], out_dir: Path, *
     print("[2/4] Embedding ...")
     texts = [f"{cards[d.id]['title']}. {cards[d.id]['one_line']} "
              f"{' '.join(cards[d.id]['keywords'])}\n{d.text[:2000]}" for d in docs]
-    vecs = dict(zip([d.id for d in docs], embed_texts(client, texts, embedding)))
+    matrix = embed_texts(client, texts, embedding)
+    vecs = dict(zip([d.id for d in docs], matrix))
+    save_vectors(out_dir, [d.id for d in docs], matrix, embedding)
 
     print("[3/4] Partitioning ...")
     root = Node([d.id for d in docs])

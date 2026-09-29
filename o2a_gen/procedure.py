@@ -135,11 +135,21 @@ Rules:
   so later steps can read that outcome whichever branch ran."""
 
 
-def extract_procedure(client: LLMClient, text: str, *, model: str, source: str = "") -> Procedure:
+def extract_procedure(client: LLMClient, text: str, *, model: str, source: str = "",
+                      outline: str = "") -> Procedure:
+    """``outline``: the compiled procedure tree's section summaries, given as a map."""
     numbered = "\n".join(f"{i}| {line}" for i, line in enumerate(text.splitlines(), 1))
     prompt = EXTRACT_PROMPT.format(numbered=numbered, kinds=" | ".join(STEP_KINDS))
+    if outline:
+        prompt = f"Section outline (summaries of the procedure's sections):\n{outline}\n\n{prompt}"
+    n_lines = len(text.splitlines())
+
+    def validate(data):
+        _validate_raw(data)
+        _check_lines(_parse(data), n_lines)
+
     data = complete_json(client, model=model, system=EXTRACT_SYSTEM, prompt=prompt,
-                         max_tokens=8000, validate=_validate_raw)
+                         max_tokens=8000, validate=validate)
     proc = _parse(data)
     proc.source = source
     return proc
@@ -184,6 +194,18 @@ def _validate_raw(data) -> None:
         visible = walk(ph.steps, visible)
     if problems:
         raise ValueError("; ".join(problems[:12]))
+
+
+def _check_lines(proc: Procedure, n_lines: int) -> None:
+    """Every step must cite lines that exist, as "a" or "a-b"."""
+    bad = []
+    for s in proc.all_steps():
+        m = re.fullmatch(r"\s*(\d+)\s*(?:-\s*(\d+))?\s*", s.source_lines or "")
+        if not m or not (1 <= int(m.group(1)) <= int(m.group(2) or m.group(1)) <= n_lines):
+            bad.append(f"{s.id}: source_lines {s.source_lines!r}")
+    if bad:
+        raise ValueError(f"source_lines must be line numbers between 1 and {n_lines}: "
+                         + "; ".join(bad[:8]))
 
 
 def _parse(data: dict) -> Procedure:

@@ -18,8 +18,9 @@ from o2a_gen.llm import LLMClient, extract_json
 _READ_LIMIT = 6000
 
 NAV_SYSTEM = """You are looking up reference material in a catalog organised as a folder tree.
-The catalog holds the O2A agent syntax, data metadata (tables, columns, connections), tool
-definitions and reference documents. Each folder has a SKILL.md (top level) or INDEX.md (deeper) describing
+It holds the procedure being implemented (folder `procedure/`, sections in document order,
+each with related sections and likely tools & data), the O2A agent syntax, data metadata
+(tables, columns, connections), tool definitions and reference documents. Each folder has a SKILL.md (top level) or INDEX.md (deeper) describing
 what it contains and listing document IDs.
 
 Reply with exactly ONE JSON object per turn, no prose:
@@ -30,7 +31,8 @@ Reply with exactly ONE JSON object per turn, no prose:
   {"action": "done", "doc_ids": ["<id>", ...], "notes": "<what you found and what is missing>"}
 
 Method:
-1. Scan the top-level skills and read the SKILL.md of the one or two most plausible.
+1. Start from the step's procedure section if you are given one; check its related sections
+   and its likely tools & data. Otherwise scan the top-level skills.
 2. Drill down through INDEX.md files, or use find when you know a name.
 3. Read the full documents you intend to rely on with get_document.
 4. Finish with done, listing only the doc_ids that are actually relevant: the table
@@ -120,7 +122,50 @@ class Catalog:
         return "\n".join(hits[:limit]) or f"no matches for {term!r}"
 
 
-def navigate(client: LLMClient, catalog: Catalog, question: str, *,
+class CombinedCatalog:
+    """Several compiled trees browsed as one (e.g. the procedure tree + the catalog).
+    Top-level folder names must not collide; the first tree wins if they do."""
+
+    def __init__(self, *catalogs: Catalog):
+        self.parts = [c for c in catalogs if c is not None]
+        self.documents: dict[str, str] = {}
+        self.index: dict[str, dict] = {}
+        self.entities: dict[str, dict] = {}
+        for c in reversed(self.parts):
+            self.documents.update(c.documents)
+            self.index.update(c.index)
+            self.entities.update(c.entities)
+
+    def _owner(self, rel: str) -> Catalog | None:
+        first = rel.strip().lstrip("/").split("/", 1)[0]
+        return next((c for c in self.parts if first and (c.skills_dir / first).exists()), None)
+
+    def top_level(self) -> str:
+        return "\n".join(c.top_level() for c in self.parts)
+
+    def ls(self, rel: str) -> str:
+        if not rel.strip().strip("/"):
+            return "\n".join(c.ls("") for c in self.parts)
+        owner = self._owner(rel)
+        return owner.ls(rel) if owner else f"not a folder: {rel}"
+
+    def read(self, rel: str) -> str:
+        owner = self._owner(rel)
+        return owner.read(rel) if owner else f"not found: {rel}"
+
+    def get(self, doc_id: str) -> str | None:
+        return self.documents.get(doc_id)
+
+    def find(self, term: str, limit: int = 15) -> str:
+        hits = [h for c in self.parts for h in c.find(term, limit).splitlines()
+                if not h.startswith("no matches")]
+        return "\n".join(hits[:limit]) or f"no matches for {term!r}"
+
+    def syntax_for(self, agent_class: str) -> str:
+        return next((t for c in self.parts if (t := c.syntax_for(agent_class))), "")
+
+
+def navigate(client: LLMClient, catalog: Catalog | CombinedCatalog, question: str, *,
              model: str, max_turns: int = 12) -> NavResult:
     messages = [{"role": "user", "content": (
         f"What I need:\n{question}\n\nTop-level skills:\n{catalog.top_level()}"

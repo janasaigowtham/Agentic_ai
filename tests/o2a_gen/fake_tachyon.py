@@ -12,6 +12,7 @@ import re
 from o2a_gen.llm import FakeLLM
 from o2a_gen.navigator import NAV_SYSTEM
 from o2a_gen.procedure import EXTRACT_SYSTEM
+from o2a_gen.proctree import SECTION_SYSTEM
 from o2a_gen.skilltree import CARD_SYSTEM, FOLDER_SYSTEM
 
 PROCEDURE_JSON = {
@@ -20,32 +21,32 @@ PROCEDURE_JSON = {
     "inputs": ["loan_number"],
     "phases": [
         {"id": "P1", "title": "Pre-process", "steps": [
-            {"id": "S1", "title": "Fetch MSP loan data", "kind": "lookup", "source_lines": "10",
+            {"id": "S1", "title": "Fetch MSP loan data", "kind": "lookup", "source_lines": "8",
              "text": "Pull the loan from MSP: investor class code and the ICMP letter effective date.",
              "produces": "msp loan data", "uses": ["loan_number"]},
-            {"id": "S2", "title": "ICMP required flag", "kind": "compute", "source_lines": "11",
+            {"id": "S2", "title": "ICMP required flag", "kind": "compute", "source_lines": "9",
              "text": "Y if the letter effective date is present, otherwise N.",
              "produces": "icmp required flag", "uses": ["S1"]},
         ]},
         {"id": "P2", "title": "ICMP check", "steps": [
-            {"id": "S3", "title": "ICMP decision", "kind": "decision", "source_lines": "14-16",
+            {"id": "S3", "title": "ICMP decision", "kind": "decision", "source_lines": "12-14",
              "text": "Branch on whether an ICMP letter applies.", "depends_on": "S2", "uses": ["S2"],
              "branches": [
                  {"label": "icmp process", "when": "flag is Y", "steps": [
-                     {"id": "S4", "title": "ICMP process", "kind": "review", "source_lines": "14-15",
+                     {"id": "S4", "title": "ICMP process", "kind": "review", "source_lines": "12-13",
                       "text": "Review the ICMP letter against investor guidelines.",
                       "produces": "icmp review", "uses": ["S1"]}]},
                  {"label": "no icmp path handler", "when": "flag is N", "steps": [
                      {"id": "S5", "title": "No ICMP path handler", "kind": "compute",
-                      "source_lines": "16", "text": "Record that no ICMP review is needed.",
+                      "source_lines": "14", "text": "Record that no ICMP review is needed.",
                       "produces": "icmp review", "uses": []}]},
              ]},
         ]},
         {"id": "P3", "title": "Approval", "steps": [
-            {"id": "S6", "title": "Approval gate", "kind": "approval", "source_lines": "19",
+            {"id": "S6", "title": "Approval gate", "kind": "approval", "source_lines": "17",
              "text": "Send the case to a supervisor for approval.", "produces": "approval status"}]},
         {"id": "P4", "title": "Post-process", "steps": [
-            {"id": "S7", "title": "Verdict synthesizer", "kind": "review", "source_lines": "22",
+            {"id": "S7", "title": "Verdict synthesizer", "kind": "review", "source_lines": "20",
              "text": "Write the denial verdict summary citing the loan data and ICMP review.",
              "produces": "verdict", "uses": ["S1", "S4"]}]},
     ],
@@ -133,6 +134,8 @@ def _folder(system, messages):
 def make_fake() -> FakeLLM:
     return FakeLLM(rules=[
         (lambda s, u: s == CARD_SYSTEM, _card),
+        (lambda s, u: s == SECTION_SYSTEM,
+         lambda s, m: {"summary": "Section: " + m[-1]["content"].split("\n", 1)[0][9:]}),
         (lambda s, u: s == FOLDER_SYSTEM, _folder),
         (lambda s, u: s == EXTRACT_SYSTEM, PROCEDURE_JSON),
         (lambda s, u: s == NAV_SYSTEM, _nav),

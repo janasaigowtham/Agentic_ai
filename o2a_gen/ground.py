@@ -10,6 +10,7 @@ and sent back to the model with the error if it fails.
 
 from __future__ import annotations
 
+import re
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
@@ -46,23 +47,32 @@ class Grounding:
     nav: NavResult | None
     gaps: str = ""
     warnings: list[str] = field(default_factory=list)
+    procedure_section: str = ""
 
 
-def ground_plan(client: LLMClient, plan: Plan, cfg: GenConfig, catalog: Catalog | None,
-                max_workers: int = 4) -> list[Grounding]:
+def ground_plan(client: LLMClient, plan: Plan, cfg: GenConfig, catalog,
+                max_workers: int = 4, proc_tree=None) -> list[Grounding]:
+    """``catalog`` is a Catalog or CombinedCatalog (procedure tree + catalog), or None.
+    ``proc_tree`` (a proctree.ProcTree) locates each step's procedure section."""
     work = [n for n in plan.nodes() if n.step is not None]
     tools = _tool_names(catalog)
     with ThreadPoolExecutor(max_workers=max(1, max_workers)) as pool:
-        return list(pool.map(lambda n: ground_node(client, n, cfg, catalog, tools), work))
+        return list(pool.map(lambda n: ground_node(client, n, cfg, catalog, tools, proc_tree), work))
 
 
 def ground_node(client: LLMClient, node: AgentNode, cfg: GenConfig,
-                catalog: Catalog | None, tools: set[str] | None = None) -> Grounding:
+                catalog, tools: set[str] | None = None, proc_tree=None) -> Grounding:
     step = node.step
     assert step is not None
+    section, section_path = "", ""
+    m = re.match(r"\d+", step.source_lines or "")
+    if proc_tree is not None and catalog is not None and m:
+        section = proc_tree.context_for_line(int(m.group()), catalog.index)
+        section_path = proc_tree.section_path_for_line(int(m.group()))
     nav = None
     if catalog is not None and node.agent_class != "decision_router_agent":
-        nav = navigate(client, catalog, _nav_question(node), model=cfg.model("navigate"),
+        question = _nav_question(node) + (f"\n\n{section}" if section else "")
+        nav = navigate(client, catalog, question, model=cfg.model("navigate"),
                        max_turns=cfg.navigate_max_turns)
     docs_block = _docs_block(nav)
     spec, check = _SPECS[node.agent_class]
@@ -71,7 +81,8 @@ def ground_node(client: LLMClient, node: AgentNode, cfg: GenConfig,
         f"O2A agent syntax for {node.agent_class}:\n"
         f"{syntax or '(not provided: follow the general rules)'}\n\n"
         f"Agent to write: `{node.name}` ({node.agent_class})\n"
-        f"Procedure step {step.id} (lines {step.source_lines}): {step.title}\n{step.text}\n\n"
+        f"Procedure step {step.id} (lines {step.source_lines}): {step.title}\n{step.text}\n"
+        + (f"{section}\n" if section else "") + "\n"
         f"output_key: {node.output_key}\n"
         f"Session keys available when it runs: {node.available_keys}\n"
         f"Keys the procedure says it needs: {node.required_keys}\n"
@@ -90,7 +101,8 @@ def ground_node(client: LLMClient, node: AgentNode, cfg: GenConfig,
     warnings = _apply(node, data, cfg, tools or set())
     if not syntax:
         warnings.append(f"{node.name}: no agent syntax found for {node.agent_class}")
-    return Grounding(node.name, step.id, nav, str(data.get("gaps", "") or ""), warnings)
+    return Grounding(node.name, step.id, nav, str(data.get("gaps", "") or ""), warnings,
+                     section_path)
 
 
 # --------------------------------------------------------------------------

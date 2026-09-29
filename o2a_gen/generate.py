@@ -11,9 +11,10 @@ from o2a_gen.config import GenConfig
 from o2a_gen.emit import write_plan
 from o2a_gen.ground import ground_plan
 from o2a_gen.llm import LLMClient
-from o2a_gen.navigator import Catalog
+from o2a_gen.navigator import Catalog, CombinedCatalog
 from o2a_gen.plan import build_plan
 from o2a_gen.procedure import extract_procedure, load_procedure_text
+from o2a_gen.proctree import build_procedure_tree
 from o2a_gen.validate import validate_dir
 
 
@@ -46,28 +47,43 @@ def generate(procedure_path: Path, out_dir: Path, cfg: GenConfig, client: LLMCli
         p.unlink()
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"[1/5] Reading procedure {procedure_path.name} ...")
-    proc = extract_procedure(client, load_procedure_text(procedure_path),
-                             model=cfg.model("extract"), source=procedure_path.name)
+    text = load_procedure_text(procedure_path)
+    proc_tree, browse, outline = None, catalog, ""
+    if cfg.generation.get("compile_procedure", True):
+        print(f"[1/6] Compiling procedure {procedure_path.name} into a skill tree ...")
+        proc_dir = out_dir.parent / f"{out_dir.name}_procedure"
+        proc_tree = build_procedure_tree(
+            client, text, procedure_path.stem, proc_dir, models=cfg.models,
+            embedding=cfg.embedding, catalog_root=catalog_dir,
+            catalog_index=catalog.index if catalog else None, workers=workers)
+        browse = CombinedCatalog(Catalog(proc_dir), catalog)
+        outline = "\n".join(f"{'  ' * max(0, s.level - 1)}- {s.title} (lines {s.start}-{s.end}): "
+                             f"{s.summary}" for s in proc_tree.root.walk() if s.level > 0)
+        print(f"      {sum(1 for _ in proc_tree.root.walk()) - 1} sections, "
+              f"{len(proc_tree.docs)} documents -> {proc_dir}")
+
+    print("[2/6] Extracting steps ...")
+    proc = extract_procedure(client, text, model=cfg.model("extract"),
+                             source=procedure_path.name, outline=outline)
     steps = proc.all_steps()
     print(f"      {len(proc.phases)} phases, {len(steps)} steps")
 
-    print("[2/5] Planning agents ...")
+    print("[3/6] Planning agents ...")
     plan = build_plan(proc, cfg)
     print(f"      {len(plan.nodes())} agents")
 
-    print(f"[3/5] Grounding each step {'in the catalog' if catalog else '(no catalog)'} ...")
-    groundings = ground_plan(client, plan, cfg, catalog, max_workers=workers)
+    print(f"[4/6] Grounding each step {'in the procedure + catalog' if browse else '(no catalog)'} ...")
+    groundings = ground_plan(client, plan, cfg, browse, max_workers=workers, proc_tree=proc_tree)
 
-    print(f"[4/5] Writing YAMLs to {out_dir} ...")
+    print(f"[5/6] Writing YAMLs to {out_dir} ...")
     write_plan(plan, cfg, out_dir, procedure_path.name)
 
-    print("[5/5] Validating ...")
+    print("[6/6] Validating ...")
     syntax = ({n.agent_class: catalog.syntax_for(n.agent_class) for n in plan.nodes()}
               if catalog else None)
     findings = validate_dir(out_dir, plan.inputs, syntax)
 
-    index = catalog.index if catalog else {}
+    index = browse.index if browse else {}
     report = {
         "procedure": procedure_path.name,
         "pipeline": plan.root.name,
@@ -82,11 +98,15 @@ def generate(procedure_path: Path, out_dir: Path, cfg: GenConfig, client: LLMCli
             {"agent": g.node, "step": g.step_id,
              "catalog_docs": [{"id": d, **{k: index.get(d, {}).get(k) for k in ("kind", "name")}}
                               for d in (g.nav.doc_ids if g.nav else [])],
+             "procedure_section": g.procedure_section,
              "navigator_notes": g.nav.notes if g.nav else "",
              "navigator_turns": g.nav.turns if g.nav else 0,
              "gaps": g.gaps, "warnings": g.warnings}
             for g in groundings
         ],
+        "procedure_tree": ({"dir": str(proc_tree.out_dir),
+                            "sections": sum(1 for _ in proc_tree.root.walk()) - 1,
+                            "documents": len(proc_tree.docs)} if proc_tree else None),
         "findings": [asdict(f) for f in findings],
         "errors": sum(f.severity == "ERROR" for f in findings),
         "warnings": sum(f.severity == "WARN" for f in findings)
