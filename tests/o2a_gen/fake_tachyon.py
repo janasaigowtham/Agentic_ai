@@ -12,6 +12,7 @@ import re
 from o2a_gen.llm import FakeLLM
 from o2a_gen.navigator import NAV_SYSTEM
 from o2a_gen.procedure import EXTRACT_SYSTEM
+from o2a_gen.skilltree import CARD_SYSTEM, FOLDER_SYSTEM
 
 PROCEDURE_JSON = {
     "name": "pmi_ddn_review",
@@ -114,8 +115,23 @@ def _c2s(system, messages):
                        "doc_types": ["table"]})
 
 
+def _card(system, messages):
+    text = messages[-1]["content"]
+    name = re.search(r"\[\w+\] (.+)", text).group(1).strip()
+    caps = re.findall(r"\b[A-Z][A-Z0-9_]{3,}\b", text)
+    return {"title": name, "one_line": f"Catalog entry for {name}.",
+            "keywords": list(dict.fromkeys([name, *caps]))[:8]}
+
+
+def _folder(system, messages):
+    first = re.search(r"- (?:sub-folder ')?([^:']+)", messages[-1]["content"]).group(1)
+    return {"label": f"{first} group", "summary": f"Items related to {first}."}
+
+
 def make_fake() -> FakeLLM:
     return FakeLLM(rules=[
+        (lambda s, u: s == CARD_SYSTEM, _card),
+        (lambda s, u: s == FOLDER_SYSTEM, _folder),
         (lambda s, u: s == EXTRACT_SYSTEM, PROCEDURE_JSON),
         (lambda s, u: s == NAV_SYSTEM, _nav),
         (lambda s, u: s.startswith("You write the fields of one agent"), _ground),

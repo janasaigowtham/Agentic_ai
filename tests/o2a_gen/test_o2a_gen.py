@@ -22,22 +22,23 @@ FIX = Path(__file__).parent / "fixtures"
 REPO = Path(__file__).resolve().parents[2]
 
 
-def make_cfg(**gen) -> GenConfig:
+def make_cfg(engine: str = "native", **gen) -> GenConfig:
     return GenConfig(
         llm={"provider": "fake"},
         models={r: f"model-{r}" for r in ("extract", "ground", "navigate", "catalog_summary",
                                           "catalog_cards", "llm_agent")},
         embedding={"provider": "llm", "model": "fake-embed"},
-        catalog={"p": 3, "max_top": 3, "min_cluster_size": 1},
+        catalog={"engine": engine, "leaf_max": 2, "branching": 3, "min_group": 1,
+                 "p": 3, "max_top": 3, "min_cluster_size": 1},
         generation={"prefix": "pmi_ddn", "pipeline_inputs": ["loan_number"],
                     "default_connection_env": "ECRM_DB_CONN", **gen},
     )
 
 
-@pytest.fixture(scope="module")
-def compiled_catalog(tmp_path_factory):
-    out = tmp_path_factory.mktemp("catalog_build")
-    compile_catalog(FIX / "catalog_src", out, make_fake(), make_cfg())
+@pytest.fixture(scope="module", params=["native", "corpus2skill"])
+def compiled_catalog(request, tmp_path_factory):
+    out = tmp_path_factory.mktemp(f"catalog_{request.param}")
+    compile_catalog(FIX / "catalog_src", out, make_fake(), make_cfg(request.param))
     return out
 
 
@@ -139,7 +140,33 @@ def test_catalog_collect_ids_fit_corpus2skill():
     assert {"MSP_LOAN_MASTER7_CS", "MSP_PMI_HISTORY"} <= names
 
 
-def test_compile_catalog_runs_corpus2skill_through_our_client(compiled_catalog):
+def test_native_tree_layout(tmp_path):
+    fake = make_fake()
+    compile_catalog(FIX / "catalog_src", tmp_path, fake, make_cfg("native"))
+    skills = tmp_path / ".claude" / "skills"
+    tops = sorted(p.name for p in skills.iterdir())
+    assert tops == ["existing-agents", "reference-docs", "tables-and-data", "tools"]
+    assert list((skills / "tables-and-data").glob("*/INDEX.md"))  # 3 tables > leaf_max 2: split
+    ents = json.loads((tmp_path / "entity_index.json").read_text())
+    tops_for_table = {p.split("/")[0] for p in ents["MSP_LOAN_MASTER7_CS"]["skill_paths"]}
+    assert tops_for_table == {"tables-and-data", "existing-agents"}  # the table, and the agent using it
+    # cards are cached by content: a rebuild makes no card calls
+    card_calls = sum(c["system"] == "You index catalog documents for a search tree. Be concrete and brief."
+                     for c in fake.calls)
+    fake2 = make_fake()
+    compile_catalog(FIX / "catalog_src", tmp_path, fake2, make_cfg("native"))
+    assert card_calls == 7
+    assert not any(c["system"].startswith("You index catalog") for c in fake2.calls)
+
+
+def test_native_engine_does_not_import_corpus2skill(tmp_path):
+    import sys
+    before = {m for m in sys.modules if m.startswith("corpus2skill")}
+    compile_catalog(FIX / "catalog_src", tmp_path, make_fake(), make_cfg("native"))
+    assert {m for m in sys.modules if m.startswith("corpus2skill")} == before
+
+
+def test_compile_catalog_builds_tree_and_store(compiled_catalog):
     skills = compiled_catalog / ".claude" / "skills"
     assert list(skills.rglob("SKILL.md"))
     store = json.loads((compiled_catalog / "documents.json").read_text())

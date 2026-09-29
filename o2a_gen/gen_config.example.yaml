@@ -20,9 +20,19 @@ embedding:
   provider: local                  # local = sentence-transformers on this machine; llm = llm.embed above
   model: Qwen/Qwen3-Embedding-0.6B # for local: a model name or a path to an internally mirrored copy
 
-catalog:                           # passed to Corpus2Skill's compiler
-  p: 10                            # children per node
-  max_top: 8                       # top-level skills
+catalog:
+  engine: native                   # native = o2a_gen.skilltree (default); corpus2skill = vendored third-party
+  # native engine
+  branching: 8                     # max sub-folders per folder
+  leaf_max: 12                     # max documents listed in one folder
+  min_group: 2
+  max_depth: 4
+  use_cards: true                  # one LLM call per doc (cached by content hash); false = no per-doc calls
+  partition_by_kind: true          # top folders: existing-agents / tables-and-data / tools / reference-docs
+  workers: 8
+  # corpus2skill engine only
+  p: 10
+  max_top: 8
   min_cluster_size: 3
   use_doc_summaries: true
 

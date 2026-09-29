@@ -16,19 +16,49 @@ catalog_src/ ──► compile-catalog (Corpus2Skill) ────────�
  agents/ tables/ tools/ reference/
 ```
 
-## Where Corpus2Skill is used
+## The catalog skill tree
 
 The procedure itself is small and ordered, so it is read directly. The **catalog** is the part
 that is too large to paste into a prompt: every table definition, existing agent YAML, tool and
-guideline. `compile-catalog` runs the vendored Corpus2Skill compiler (`third_party/corpus2skill`,
-unmodified) over it to build a navigable skill tree. During generation, `navigator.py` browses
-that tree for each step, the way Corpus2Skill's serve step does, but locally: nothing is uploaded
-and no server-side code execution is used.
+guideline. `compile-catalog` turns it into a folder tree the model can browse, and during
+generation `navigator.py` browses that tree for each step. Nothing is uploaded, and no
+server-side code execution is used.
+
+What goes in, and what comes out:
+
+| Input | From |
+|---|---|
+| catalog documents | `catalog_src/{agents,tables,tools,reference}` (see below), one document per agent, table, tool, or guideline section |
+| card model | `models.catalog_cards`: one call per document for title, summary and keywords, cached by content hash |
+| folder model | `models.catalog_summary`: one call per folder for its name and summary |
+| embeddings | `embedding.provider`: local sentence-transformers, or Tachyon via `llm.embed` |
+
+| Output (in the `--out` dir) | Used by |
+|---|---|
+| `.claude/skills/<folder>/SKILL.md`, `.../INDEX.md` | navigator `read` / `ls` |
+| `documents.json` | navigator `get_document` |
+| `entity_index.json`, `catalog_index.json` | navigator `find` (table, agent, tool, column names) |
+| `cards.json`, `build_meta.json` | rebuild cache, build settings |
+
+Two interchangeable engines build it (`catalog.engine`):
+
+- **`native` (default): `o2a_gen/skilltree.py`.** Written for this project; no third-party
+  code. Top folders are fixed by catalog kind (`existing-agents`, `tables-and-data`, `tools`,
+  `reference-docs`), then each is split by k-means on embeddings until a folder lists at most
+  `leaf_max` documents. Folders are named and summarised bottom-up. The name index is built
+  without the LLM, from document names and card keywords. Needs only numpy.
+- **`corpus2skill`: the vendored research implementation** (`third_party/corpus2skill`, MIT),
+  run through `c2s_bridge.py` with its LLM calls redirected to your client. Kept for comparison.
+  It adds an LLM repartition pass and LLM entity extraction, so it costs more calls per build.
+
+Both produce the same layout, so everything downstream is unchanged. To remove the third-party
+code entirely, delete `third_party/corpus2skill/` and `o2a_gen/c2s_bridge.py`; the native engine
+does not import them.
 
 ## Setup
 
 ```bash
-pip install -r o2a_gen/requirements.txt
+pip install -r o2a_gen/requirements.txt   # scikit-learn is only needed for engine: corpus2skill
 cp o2a_gen/gen_config.example.yaml gen_config.yaml
 ```
 
@@ -125,7 +155,7 @@ python -m pytest tests/o2a_gen -q
 ```
 
 The tests use a scripted fake model (`tests/o2a_gen/fake_tachyon.py`), so they run offline. They
-cover the real Corpus2Skill compile, navigation, validation retries, YAML output, and a full run
+cover both catalog engines (navigation and generation run against each), navigation, validation retries, YAML output, and a full run
 compared against a hand-built PMI DDN-style set in `tests/o2a_gen/fixtures/gold`. The fixture
 procedure and catalog are illustrative, not real policy.
 

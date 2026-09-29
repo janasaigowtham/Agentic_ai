@@ -1,7 +1,7 @@
 # o2a_gen core
 pyyaml>=6.0
 numpy>=1.24
-scikit-learn>=1.3
+scikit-learn>=1.3   # only for catalog.engine: corpus2skill
 # tests
 pytest>=7.0
 # optional:

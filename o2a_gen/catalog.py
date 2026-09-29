@@ -9,8 +9,8 @@ Source layout (every folder is optional):
       tools/      tool definitions: .yaml/.json ({name, ...} or list) or .md/.txt
       reference/  policies, guidelines, SOP excerpts (.md/.txt)
 
-The catalog is written as one JSONL corpus and compiled by Corpus2Skill into a
-navigable skill tree. ``catalog_index.json`` maps each short doc ID back to
+The catalog is compiled into a navigable skill tree by o2a_gen.skilltree (or,
+optionally, the vendored Corpus2Skill). ``catalog_index.json`` maps each short doc ID back to
 its kind and name.
 """
 
@@ -185,15 +185,25 @@ def write_corpus(docs: list[CatalogDoc], out_dir: Path) -> Path:
 
 
 def compile_catalog(src: Path, out_dir: Path, client, cfg) -> Path:
-    """collect -> write JSONL -> Corpus2Skill compile. Returns the skills dir."""
-    from o2a_gen.c2s_bridge import compile_with_corpus2skill
+    """Collect the catalog and compile it into a skill tree. Returns the skills dir.
 
+    catalog.engine: native (default, o2a_gen.skilltree) or corpus2skill (vendored copy).
+    """
     out_dir = Path(out_dir)
     docs = collect_catalog(Path(src))
     if not docs:
         raise ValueError(f"no catalog documents found under {src} (expected {', '.join(KINDS)}/)")
-    corpus_dir = write_corpus(docs, out_dir)
-    return compile_with_corpus2skill(
-        client, corpus_dir=corpus_dir, output_dir=out_dir,
-        models=cfg.models, embedding=cfg.embedding, catalog=cfg.catalog,
-    )
+    engine = cfg.catalog.get("engine", "native")
+    if engine == "native":
+        from o2a_gen.skilltree import build_skill_tree
+        write_corpus(docs, out_dir)  # catalog_index.json for the navigator; JSONL for reference
+        return build_skill_tree(client, docs, out_dir, models=cfg.models,
+                                embedding=cfg.embedding, catalog=cfg.catalog)
+    if engine == "corpus2skill":
+        from o2a_gen.c2s_bridge import compile_with_corpus2skill
+        corpus_dir = write_corpus(docs, out_dir)
+        return compile_with_corpus2skill(
+            client, corpus_dir=corpus_dir, output_dir=out_dir,
+            models=cfg.models, embedding=cfg.embedding, catalog=cfg.catalog,
+        )
+    raise ValueError(f"unknown catalog.engine {engine!r} (use 'native' or 'corpus2skill')")
