@@ -1,5 +1,7 @@
 # o2a_gen: procedure document → O2A agent YAMLs
 
+Architecture and a detailed end-to-end walkthrough: open [`docs/architecture.html`](docs/architecture.html) in a browser.
+
 Generates the agent YAMLs for a review workflow from four inputs:
 
 | Input | What it gives the generator |
