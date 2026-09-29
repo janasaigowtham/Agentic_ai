@@ -7,7 +7,7 @@ llm:
   max_concurrency: 8                                   # parallel calls to Tachyon
 
 # Model identifiers exactly as Tachyon expects them. Use the same names you put
-# in the `model:` field of your existing LlmAgent YAMLs.
+# in the `model:` field of LlmAgent YAMLs.
 models:
   extract: REPLACE_WITH_TACHYON_MODEL          # reads the procedure, needs a strong model
   ground: REPLACE_WITH_TACHYON_MODEL           # writes SQL / transforms / prompts
@@ -28,7 +28,7 @@ catalog:
   min_group: 2
   max_depth: 4
   use_cards: true                  # one LLM call per doc (cached by content hash); false = no per-doc calls
-  partition_by_kind: true          # top folders: existing-agents / tables-and-data / tools / reference-docs
+  partition_by_kind: true          # top folders: agent-syntax / data-metadata / tools / reference-docs
   workers: 8
   # corpus2skill engine only
   p: 10

@@ -6,6 +6,7 @@ import json
 from dataclasses import asdict
 from pathlib import Path
 
+from o2a_gen.compare import compare_dirs
 from o2a_gen.config import GenConfig
 from o2a_gen.emit import write_plan
 from o2a_gen.ground import ground_plan
@@ -17,8 +18,27 @@ from o2a_gen.validate import validate_dir
 
 
 def generate(procedure_path: Path, out_dir: Path, cfg: GenConfig, client: LLMClient, *,
-             catalog_dir: Path | None = None, workers: int = 4, overwrite: bool = False) -> dict:
+             catalog_dir: Path | None = None, workers: int = 4, overwrite: bool = False,
+             compare_with: Path | None = None) -> dict:
+    """Generate from the procedure + catalog only. ``compare_with`` (existing YAMLs) is
+    read after the YAMLs are written, never before, so it cannot influence generation."""
     procedure_path, out_dir = Path(procedure_path), Path(out_dir)
+    catalog = Catalog(catalog_dir) if catalog_dir else None
+    if catalog is not None:
+        leaked = sorted({m.get("name") for m in catalog.index.values() if m.get("kind") == "agent"})
+        if leaked:
+            raise ValueError(f"catalog {catalog_dir} contains existing agent YAMLs {leaked[:5]}; "
+                             "rebuild it with compile-catalog (they are not a generation input)")
+    if compare_with is not None:
+        gold = Path(compare_with).resolve()
+        if gold == out_dir.resolve():
+            raise ValueError("--compare-with must not be the output directory")
+        if catalog is not None and any(
+                gold == Path(m.get("source", "")).resolve()
+                or gold in Path(m.get("source", "")).resolve().parents
+                for m in catalog.index.values()):
+            raise ValueError(f"catalog was built from files inside {compare_with}; "
+                             "existing YAMLs must not be a generation input")
     old = list(out_dir.glob("*.yaml")) if out_dir.exists() else []
     if old and not overwrite:
         raise FileExistsError(f"{out_dir} already has {len(old)} YAML files; use --overwrite")
@@ -36,7 +56,6 @@ def generate(procedure_path: Path, out_dir: Path, cfg: GenConfig, client: LLMCli
     plan = build_plan(proc, cfg)
     print(f"      {len(plan.nodes())} agents")
 
-    catalog = Catalog(catalog_dir) if catalog_dir else None
     print(f"[3/5] Grounding each step {'in the catalog' if catalog else '(no catalog)'} ...")
     groundings = ground_plan(client, plan, cfg, catalog, max_workers=workers)
 
@@ -44,7 +63,9 @@ def generate(procedure_path: Path, out_dir: Path, cfg: GenConfig, client: LLMCli
     write_plan(plan, cfg, out_dir, procedure_path.name)
 
     print("[5/5] Validating ...")
-    findings = validate_dir(out_dir, plan.inputs)
+    syntax = ({n.agent_class: catalog.syntax_for(n.agent_class) for n in plan.nodes()}
+              if catalog else None)
+    findings = validate_dir(out_dir, plan.inputs, syntax)
 
     index = catalog.index if catalog else {}
     report = {
@@ -72,6 +93,9 @@ def generate(procedure_path: Path, out_dir: Path, cfg: GenConfig, client: LLMCli
                     + sum(len(g.warnings) for g in groundings),
         "llm_usage": getattr(getattr(client, "usage", None), "as_dict", lambda: {})(),
     }
+    if compare_with is not None:
+        print(f"[+] Comparing with existing YAMLs in {compare_with} ...")
+        report["comparison"] = compare_dirs(Path(compare_with), out_dir)
     (out_dir.parent / f"{out_dir.name}_report.json").write_text(json.dumps(report, indent=2))
     (out_dir.parent / f"{out_dir.name}_steps.json").write_text(
         json.dumps(asdict(proc), indent=2))

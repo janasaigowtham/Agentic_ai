@@ -5,13 +5,13 @@ Turns catalog documents into a folder tree an agent can browse:
     <out>/.claude/skills/<group>/SKILL.md        top level: what the group covers
     <out>/.claude/skills/<group>/<sub>/INDEX.md  deeper levels, down to document rows
     <out>/documents.json                          full text by doc ID
-    <out>/entity_index.json                       names (tables, agents, tools, keywords) -> folders
+    <out>/entity_index.json                       names (tables, agent classes, tools, keywords) -> folders
     <out>/cards.json                              per-document cards, cached by content hash
 
 Pipeline:
   1. Card: one LLM call per document -> title, one-line summary, keywords (cached).
   2. Embed: card + opening text, via the configured embedder.
-  3. Partition: top level by catalog kind (agents, tables, tools, reference),
+  3. Partition: top level by catalog kind (syntax, metadata, tools, reference),
      then recursive k-means inside each kind until groups are small enough to list.
   4. Describe: bottom-up, one LLM call per folder -> folder name + summary.
   5. Write the tree, the document store and a name index (no LLM).
@@ -33,8 +33,8 @@ from o2a_gen.catalog import CatalogDoc
 from o2a_gen.llm import LLMClient, complete_json
 
 KIND_FOLDERS = {
-    "agent": ("existing-agents", "Existing O2A agent YAMLs, to reuse or copy."),
-    "table": ("tables-and-data", "Database tables, columns and connections."),
+    "schema": ("agent-syntax", "O2A runtime schema: fields and rules for each agent_class."),
+    "metadata": ("data-metadata", "Database tables, columns and connections."),
     "tool": ("tools", "Tools agents can call."),
     "reference": ("reference-docs", "Policies, guidelines and procedure references."),
 }
@@ -80,9 +80,9 @@ CARD_SYSTEM = "You index catalog documents for a search tree. Be concrete and br
 CARD_PROMPT = """Document:
 {text}
 
-Return JSON: {{"title": "short title (use the exact table/agent/tool name if it has one)",
+Return JSON: {{"title": "short title (use the exact table, tool or agent_class name if it has one)",
 "one_line": "one sentence on what it is and when to use it",
-"keywords": ["up to 8 exact names or terms someone would search for: table, column, agent, tool, policy names"]}}"""
+"keywords": ["up to 8 exact names or terms someone would search for: table, column, tool, field, policy names"]}}"""
 
 
 def _hash(text: str) -> str:

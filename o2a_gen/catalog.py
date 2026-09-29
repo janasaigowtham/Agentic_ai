@@ -1,17 +1,23 @@
-"""Builds the grounding catalog: existing agents, tables, tools and reference docs.
+"""Builds the generation catalog: agent syntax, metadata, tools and reference docs.
 
-Source layout (every folder is optional):
+Source layout:
 
     catalog_src/
-      agents/     existing O2A agent YAMLs, from any pipeline (best examples to copy)
-      tables/     data dictionary: .sql DDL, .md/.txt notes, .csv (table,column,type,description),
-                  or .yaml/.json ({name, columns, connection_env, ...} or a list of them)
+      schema/     REQUIRED. The O2A agent syntax: the runtime schema of each agent_class
+                  (.md/.txt split on headings that name a class, or .yaml/.json keyed by class)
+      metadata/   data dictionary: .sql DDL, .md/.txt notes (e.g. which connection env var a
+                  table uses), .csv (table,column,type,description), or .yaml/.json table specs.
+                  (`tables/` is accepted as an alias.)
       tools/      tool definitions: .yaml/.json ({name, ...} or list) or .md/.txt
       reference/  policies, guidelines, SOP excerpts (.md/.txt)
 
+Existing agent YAMLs are deliberately NOT an input: generation must work from the
+procedure, tools, metadata and syntax alone. Existing YAMLs are only used afterwards,
+by `compare`. An `agents/` folder here is ignored with a warning.
+
 The catalog is compiled into a navigable skill tree by o2a_gen.skilltree (or,
-optionally, the vendored Corpus2Skill). ``catalog_index.json`` maps each short doc ID back to
-its kind and name.
+optionally, the vendored Corpus2Skill). ``catalog_index.json`` maps each short doc ID
+back to its kind and name.
 """
 
 from __future__ import annotations
@@ -25,14 +31,14 @@ from pathlib import Path
 
 import yaml
 
-KINDS = ("agents", "tables", "tools", "reference")
+KINDS = ("schema", "metadata", "tools", "reference")
 _MAX_CHARS = 7500  # stay under Corpus2Skill's default max_doc_chars (8000)
 
 
 @dataclass
 class CatalogDoc:
     id: str
-    kind: str      # agent | table | tool | reference
+    kind: str      # schema | metadata | tool | reference
     name: str
     source: str
     text: str
@@ -54,30 +60,41 @@ def _load_structured(path: Path):
     return json.loads(text) if path.suffix == ".json" else yaml.safe_load(text)
 
 
-def _agents(folder: Path) -> list[CatalogDoc]:
-    docs = []
-    for p in sorted(folder.glob("*.y*ml")):
-        raw = p.read_text(encoding="utf-8", errors="replace")
-        try:
-            data = yaml.safe_load(raw) or {}
-        except yaml.YAMLError:
+def _schema(folder: Path, known_classes: set[str]) -> list[CatalogDoc]:
+    """One doc per agent_class section of the syntax document(s); the rest is 'general'."""
+    docs: list[CatalogDoc] = []
+    for p in sorted(folder.iterdir()):
+        if not p.is_file():
             continue
-        if not isinstance(data, dict):
+        if p.suffix.lower() in (".yaml", ".yml", ".json"):
+            data = _load_structured(p)
+            if isinstance(data, dict):
+                for key, spec in data.items():
+                    name = str(key) if str(key) in known_classes else f"general: {key}"
+                    docs.append(_mk("schema", name, p,
+                                    yaml.safe_dump({key: spec}, sort_keys=False)[:_MAX_CHARS]))
             continue
-        name = str(data.get("name") or p.stem)
-        cls = data.get("agent_class", "?")
-        desc = str(data.get("description") or "").strip()
-        body = (f"Existing O2A agent `{name}` (agent_class: {cls}).\n"
-                + (f"Purpose: {desc}\n" if desc else "")
-                + f"\n```yaml\n{raw.strip()}\n```")
-        docs.append(_mk("agent", name, p, body[:_MAX_CHARS]))
+        if p.suffix.lower() not in (".md", ".txt"):
+            continue
+        text = p.read_text(encoding="utf-8", errors="replace")
+        sections = re.split(r"(?m)^(?=#{1,4} )", text)
+        general: list[str] = []
+        for sec in sections:
+            heading = sec.split("\n", 1)[0]
+            cls = next((c for c in known_classes if re.search(rf"\b{re.escape(c)}\b", heading)), None)
+            if cls:
+                docs.append(_mk("schema", cls, p, sec[:_MAX_CHARS]))
+            elif sec.strip():
+                general.append(sec)
+        if general:
+            docs.extend(_split_text("schema", f"general ({p.stem})", p, "\n".join(general)))
     return docs
 
 
 _CREATE_TABLE = re.compile(r"create\s+(?:multiset\s+|set\s+)?table\s+([\w.\"]+)", re.I)
 
 
-def _tables(folder: Path) -> list[CatalogDoc]:
+def _metadata(folder: Path) -> list[CatalogDoc]:
     docs = []
     for p in sorted(folder.iterdir()):
         if not p.is_file():
@@ -95,25 +112,25 @@ def _tables(folder: Path) -> list[CatalogDoc]:
                 for r in rows:
                     lines.append(f"- {r.get('column', '?')} ({r.get('type', '?')}): "
                                  f"{r.get('description', '')}".rstrip(": "))
-                docs.append(_mk("table", table, p, "\n".join(lines)[:_MAX_CHARS]))
+                docs.append(_mk("metadata", table, p, "\n".join(lines)[:_MAX_CHARS]))
         elif suffix == ".sql":
             text = p.read_text(encoding="utf-8", errors="replace")
             starts = [m.start() for m in _CREATE_TABLE.finditer(text)]
             if not starts:
-                docs.append(_mk("table", p.stem, p, f"```sql\n{text[:_MAX_CHARS]}\n```"))
+                docs.append(_mk("metadata", p.stem, p, f"```sql\n{text[:_MAX_CHARS]}\n```"))
                 continue
             for i, s in enumerate(starts):
                 chunk = text[s:starts[i + 1] if i + 1 < len(starts) else len(text)]
                 name = _CREATE_TABLE.match(chunk).group(1).strip('"')
-                docs.append(_mk("table", name, p, f"```sql\n{chunk.strip()[:_MAX_CHARS]}\n```"))
+                docs.append(_mk("metadata", name, p, f"```sql\n{chunk.strip()[:_MAX_CHARS]}\n```"))
         elif suffix in (".yaml", ".yml", ".json"):
             data = _load_structured(p)
             for item in data if isinstance(data, list) else [data]:
                 if isinstance(item, dict):
                     name = str(item.get("name") or item.get("table") or p.stem)
-                    docs.append(_mk("table", name, p, yaml.safe_dump(item, sort_keys=False)[:_MAX_CHARS]))
+                    docs.append(_mk("metadata", name, p, yaml.safe_dump(item, sort_keys=False)[:_MAX_CHARS]))
         elif suffix in (".md", ".txt"):
-            docs.extend(_split_text("table", p.stem, p))
+            docs.extend(_split_text("metadata", p.stem, p))
     return docs
 
 
@@ -133,9 +150,10 @@ def _tools(folder: Path) -> list[CatalogDoc]:
     return docs
 
 
-def _split_text(kind: str, name: str, path: Path) -> list[CatalogDoc]:
+def _split_text(kind: str, name: str, path: Path, text: str | None = None) -> list[CatalogDoc]:
     """One doc per file, split on markdown headings if the file is long."""
-    text = path.read_text(encoding="utf-8", errors="replace")
+    if text is None:
+        text = path.read_text(encoding="utf-8", errors="replace")
     if len(text) <= _MAX_CHARS:
         return [_mk(kind, name, path, text)]
     sections = re.split(r"(?m)^(?=#{1,3} )", text)
@@ -154,15 +172,27 @@ def _split_text(kind: str, name: str, path: Path) -> list[CatalogDoc]:
 
 
 def collect_catalog(src: Path) -> list[CatalogDoc]:
+    from o2a_gen.validate import KNOWN_CLASSES
+
     src = Path(src)
-    loaders = {"agents": _agents, "tables": _tables, "tools": _tools,
-               "reference": lambda f: [d for p in sorted(f.glob("*")) if p.suffix.lower() in (".md", ".txt")
-                                       for d in _split_text("reference", p.stem, p)]}
+    if (src / "agents").is_dir():
+        print(f"WARNING: ignoring {src / 'agents'}: existing agent YAMLs are not a generation "
+              "input. Pass them to `compare` (or generate --compare-with) instead.")
+    metadata_dir = src / "metadata" if (src / "metadata").is_dir() else src / "tables"
+    sources = [
+        (src / "schema", lambda f: _schema(f, KNOWN_CLASSES)),
+        (metadata_dir, _metadata),
+        (src / "tools", _tools),
+        (src / "reference", lambda f: [d for p in sorted(f.glob("*"))
+                                       if p.suffix.lower() in (".md", ".txt")
+                                       for d in _split_text("reference", p.stem, p)]),
+    ]
     docs: list[CatalogDoc] = []
-    for kind in KINDS:
-        folder = src / kind
+    for folder, load in sources:
         if folder.is_dir():
-            docs.extend(loaders[kind](folder))
+            docs.extend(load(folder))
+    if not any(d.kind == "schema" for d in docs):
+        raise ValueError(f"{src / 'schema'} is required: add the O2A agent syntax document")
     seen: set[str] = set()
     unique = []
     for d in docs:

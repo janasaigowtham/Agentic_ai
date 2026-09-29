@@ -18,8 +18,8 @@ from o2a_gen.llm import LLMClient, extract_json
 _READ_LIMIT = 6000
 
 NAV_SYSTEM = """You are looking up reference material in a catalog organised as a folder tree.
-The catalog holds existing O2A agent YAMLs, database table definitions, tool definitions and
-reference documents. Each folder has a SKILL.md (top level) or INDEX.md (deeper) describing
+The catalog holds the O2A agent syntax, data metadata (tables, columns, connections), tool
+definitions and reference documents. Each folder has a SKILL.md (top level) or INDEX.md (deeper) describing
 what it contains and listing document IDs.
 
 Reply with exactly ONE JSON object per turn, no prose:
@@ -33,8 +33,8 @@ Method:
 1. Scan the top-level skills and read the SKILL.md of the one or two most plausible.
 2. Drill down through INDEX.md files, or use find when you know a name.
 3. Read the full documents you intend to rely on with get_document.
-4. Finish with done, listing only the doc_ids that are actually relevant. Prefer existing
-   agent YAMLs that do the same job, and the table definitions a query would need.
+4. Finish with done, listing only the doc_ids that are actually relevant: the table
+   definitions and connections a query needs, the tools a review needs, the guidelines it applies.
 If nothing relevant exists, finish with done, an empty list, and say so in notes."""
 
 
@@ -92,6 +92,13 @@ class Catalog:
         if not p.is_file():
             return f"not found: {rel}"
         return _clip(p.read_text(encoding="utf-8", errors="replace"))
+
+    def syntax_for(self, agent_class: str) -> str:
+        """The agent-syntax sections for this class plus the general sections."""
+        ids = [i for i, m in self.index.items() if m.get("kind") == "schema"
+               and (m.get("name") == agent_class or str(m.get("name", "")).startswith("general"))]
+        ids.sort(key=lambda i: self.index[i]["name"] != agent_class)  # class section first
+        return "\n\n".join(self.documents.get(i, "") for i in ids).strip()
 
     def get(self, doc_id: str) -> str | None:
         return self.documents.get(doc_id)

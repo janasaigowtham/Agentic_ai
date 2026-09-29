@@ -1,8 +1,9 @@
 """Fills each planned agent's fields using the catalog: SQL, transforms, prompts, routes.
 
-For every step, the navigator browses the compiled catalog for the tables,
-existing agents, tools and reference documents it needs; a second call then
-writes the agent's fields from what was found. Each answer is checked
+For every step, the navigator browses the compiled catalog for the metadata,
+tools and reference documents it needs. A second call then writes the agent's
+fields from what was found, following the agent-syntax section for the agent's
+class, which is always included. Each answer is checked
 (session keys exist, SQL uses bind parameters, credentials come from ENV, ...)
 and sent back to the model with the error if it fails.
 """
@@ -23,57 +24,18 @@ RESERVED_FIELDS = {"name", "agent_class", "sub_agents", "routes", "output_key", 
                    "input_key", "instruction", "transform", "default_db_yaml", "model",
                    "description", "tools"}
 
-CONVENTIONS = """O2A agent conventions (follow exactly):
+CONVENTIONS = """General O2A rules (the agent syntax given with each request is authoritative
+where it says more):
 - Agents share state through a session dict. An agent reads `input_keys` and writes `output_key`.
 - Transforms and SQL reference session values as {{ key }} or {{ key[0].field }}.
 - LlmAgent instructions reference session values as {key} or {key[0].field}.
 - SQL binds values as :param, where param is a session key. Never paste literal values or
-  credentials into SQL. Connection URLs are always ${ENV:VAR_NAME}.
-- database_agent writes a list of row dicts, so later agents read {{ key[0].column }}.
+  credentials into SQL. Connection URLs are always ${ENV:VAR_NAME}."""
 
-Examples:
-
-name: pmi_ddn_fetch_msp_loan_data
-agent_class: database_agent
-output_key: pmi_ddn_msp_loan_data
-input_keys: [loan_number]
-default_db_yaml: |
-  type: teradata
-  connection:
-    url: ${ENV:ECRM_DB_CONN}
-  query: >
-    SELECT M7.LN_NO, TRIM(M7.INV_CLASS_CODE) AS inv_class_code
-    FROM MSP_LOAN_MASTER7_CS M7
-    WHERE M7.LN_NO = LPAD(TRIM(CAST(:loan_number AS VARCHAR(10))), 10, '0')
-
-name: pmi_ddn_icmp_required_flag
-agent_class: slv_transformation_agent
-input_keys: [pmi_ddn_msp_loan_data]
-output_key: pmi_ddn_icmp_required_flag
-strict: false
-transform:
-  pmi_ddn_icmp_required_flag:
-    $cond:
-      if:
-        left: '{{ pmi_ddn_msp_loan_data[0].letter_effective_date }}'
-        op: not_null
-      then: Y
-      else: N
-
-name: pmi_ddn_icmp_decision_router
-agent_class: decision_router_agent
-routes:
-  - conditions:
-      - context_key: pmi_ddn_icmp_required_flag
-        operator: eq
-        value: Y
-    target_agent: pmi_ddn_icmp_process
-    priority: 10"""
-
-GROUND_SYSTEM = ("You write the fields of one agent in an O2A pipeline, grounded in catalog "
-                 "documents that were looked up for you. Use real table, column, tool and "
-                 "connection names from those documents; never invent them. If the documents "
-                 "don't contain what you need, write your best attempt and explain the gap in "
+GROUND_SYSTEM = ("You write the fields of one agent in an O2A pipeline. Follow the O2A agent "
+                 "syntax provided for its agent_class exactly. Use real table, column, tool and "
+                 "connection names from the catalog documents provided; never invent them. If "
+                 "something you need is missing, write your best attempt and explain the gap in "
                  "`gaps`.\n\n" + CONVENTIONS)
 
 
@@ -104,7 +66,10 @@ def ground_node(client: LLMClient, node: AgentNode, cfg: GenConfig,
                        max_turns=cfg.navigate_max_turns)
     docs_block = _docs_block(nav)
     spec, check = _SPECS[node.agent_class]
+    syntax = catalog.syntax_for(node.agent_class) if catalog is not None else ""
     prompt = (
+        f"O2A agent syntax for {node.agent_class}:\n"
+        f"{syntax or '(not provided: follow the general rules)'}\n\n"
         f"Agent to write: `{node.name}` ({node.agent_class})\n"
         f"Procedure step {step.id} (lines {step.source_lines}): {step.title}\n{step.text}\n\n"
         f"output_key: {node.output_key}\n"
@@ -123,6 +88,8 @@ def ground_node(client: LLMClient, node: AgentNode, cfg: GenConfig,
     data = complete_json(client, model=cfg.model("ground"), system=GROUND_SYSTEM,
                          prompt=prompt, max_tokens=4000, validate=validate)
     warnings = _apply(node, data, cfg, tools or set())
+    if not syntax:
+        warnings.append(f"{node.name}: no agent syntax found for {node.agent_class}")
     return Grounding(node.name, step.id, nav, str(data.get("gaps", "") or ""), warnings)
 
 
@@ -131,7 +98,7 @@ def ground_node(client: LLMClient, node: AgentNode, cfg: GenConfig,
 # --------------------------------------------------------------------------
 
 _COMMON = ('"description": "one sentence", "gaps": "what the catalog lacked, or empty", '
-           '"extra": {runtime fields copied from a similar existing agent, if any}')
+           '"extra": {other fields the agent syntax requires for this class, with values}')
 
 LOOKUP_SPEC = ('Return JSON: {"db_type": "teradata|postgres|...", "connection_env": "ENV_VAR_NAME", '
                '"query": "SQL using :params", "params": ["session keys bound in the query"], '
@@ -294,13 +261,12 @@ def _apply(node: AgentNode, d: dict, cfg: GenConfig, tools: set[str]) -> list[st
 def _nav_question(node: AgentNode) -> str:
     step = node.step
     what = {
-        "database_agent": "the database table(s) and columns holding this data, the connection "
-                          "it uses, and any existing database_agent that fetches similar data",
-        "slv_transformation_agent": "existing transformation agents doing similar logic (to copy "
-                                    "the transform syntax) and the fields of the input data",
-        "LlmAgent": "policies or guidelines this review must apply, existing LlmAgents doing "
-                    "similar reviews, and tools it may need",
-        "agent_gate": "existing agent_gate YAMLs (to copy their runtime fields)",
+        "database_agent": "the table(s) and columns holding this data and the connection "
+                          "(env var) used to reach them",
+        "slv_transformation_agent": "the fields of the input data and any transform functions "
+                                    "the agent syntax documents",
+        "LlmAgent": "policies or guidelines this review must apply and the tools it may need",
+        "agent_gate": "how approvals or external events are defined for gates",
     }.get(node.agent_class, "related material")
     return (f"Procedure step: {step.title}\n{step.text}\n"
             f"It will be an O2A {node.agent_class}. Find {what}.")

@@ -131,7 +131,7 @@ Rules:
 - Every branch has at least one step. If a branch just continues or ends the review, add one
   compute step that records that outcome.
 - Steps inside a branch only run on that branch. When each branch ends by producing the same
-  kind of outcome (e.g. "ICMP review outcome"), use the identical `produces` text in each branch
+  kind of outcome (e.g. "review outcome"), use the identical `produces` text in each branch
   so later steps can read that outcome whichever branch ran."""
 
 

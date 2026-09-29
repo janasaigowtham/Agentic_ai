@@ -6,6 +6,7 @@ be verified without running the pipeline.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -70,10 +71,24 @@ def children(a: dict) -> list[str]:
     return [str(s.get("name") if isinstance(s, dict) else s) for s in a.get("sub_agents") or []]
 
 
-def validate_dir(folder: Path, pipeline_inputs: list[str] | None = None) -> list[Finding]:
+ALWAYS_ALLOWED = {"name", "agent_class", "description", "version", "sub_agents"}
+
+
+def validate_dir(folder: Path, pipeline_inputs: list[str] | None = None,
+                 syntax: dict[str, str] | None = None) -> list[Finding]:
+    """``syntax`` maps agent_class -> its agent-syntax text; when given, fields the
+    syntax never mentions are flagged."""
     agents, findings = load_agents(folder)
     inputs = set(pipeline_inputs or [])
     F = findings.append
+    for name, a in agents.items():
+        text = (syntax or {}).get(a.get("agent_class"), "")
+        if not text:
+            continue
+        for fld in a:
+            if fld not in ALWAYS_ALLOWED and not re.search(rf"\b{re.escape(str(fld))}\b", text):
+                F(Finding("WARN", "unknown-field", name,
+                          f"field {fld!r} is not in the agent syntax for {a.get('agent_class')}"))
 
     referenced = {c for a in agents.values() for c in children(a)}
     referenced |= {r.get("target_agent") for a in agents.values() for r in a.get("routes") or []}

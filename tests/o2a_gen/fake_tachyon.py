@@ -102,7 +102,9 @@ def _ground(system, messages):
                 {"context_key": "pmi_ddn_icmp_required_flag", "operator": "eq",
                  "value": "Y" if i == 0 else "N"}]})
         return {"routes": routes, "description": "Route on the ICMP flag."}
-    return {"description": "Wait for supervisor approval.", "extra": {"resume_event": "supervisor_approval"}}
+    # agent_gate: fill required fields only if the agent syntax passed in the prompt defines them
+    extra = {"resume_event": "supervisor_approval"} if "resume_event" in prompt else {}
+    return {"description": "Wait for supervisor approval.", "extra": extra}
 
 
 def _c2s(system, messages):

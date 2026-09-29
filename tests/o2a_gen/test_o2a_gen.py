@@ -6,7 +6,6 @@ import pytest
 import yaml
 
 from o2a_gen.catalog import collect_catalog, compile_catalog
-from o2a_gen.compare import compare_dirs
 from o2a_gen.config import GenConfig, load_config
 from o2a_gen.generate import generate
 from o2a_gen.llm import FakeLLM, complete_json, extract_json
@@ -130,14 +129,35 @@ def test_plan_names_keys_and_shared_branch_key():
 
 # ---------------------------------------------------------------- catalog
 
-def test_catalog_collect_ids_fit_corpus2skill():
+def test_catalog_collect_kinds_and_ids():
     docs = collect_catalog(FIX / "catalog_src")
     kinds = {d.kind for d in docs}
-    assert kinds == {"agent", "table", "tool", "reference"}
+    assert kinds == {"schema", "metadata", "tool", "reference"}
     assert all(len(d.id) <= 16 for d in docs)  # Corpus2Skill truncates IDs at 16 chars
     assert len({d.id for d in docs}) == len(docs)
-    names = {d.name for d in docs if d.kind == "table"}
+    names = {d.name for d in docs if d.kind == "metadata"}
     assert {"MSP_LOAN_MASTER7_CS", "MSP_PMI_HISTORY"} <= names
+    schema = {d.name for d in docs if d.kind == "schema"}
+    assert {"database_agent", "LlmAgent", "decision_router_agent", "agent_gate",
+            "slv_transformation_agent", "transformation_agent"} <= schema
+    # a heading naming transformation_agent must not be filed under slv_transformation_agent
+    slv = next(d for d in docs if d.kind == "schema" and d.name == "slv_transformation_agent")
+    assert "Same fields as slv_transformation_agent" not in slv.text
+
+
+def test_catalog_ignores_existing_agents_folder(tmp_path, capsys):
+    shutil.copytree(FIX / "catalog_src", tmp_path / "src")
+    shutil.copytree(FIX / "gold", tmp_path / "src" / "agents")
+    docs = collect_catalog(tmp_path / "src")
+    assert "ignoring" in capsys.readouterr().out
+    assert not any("pmi_ddn_icmp_process" in d.text for d in docs)
+
+
+def test_catalog_requires_agent_syntax(tmp_path):
+    shutil.copytree(FIX / "catalog_src", tmp_path / "src")
+    shutil.rmtree(tmp_path / "src" / "schema")
+    with pytest.raises(ValueError, match="schema"):
+        collect_catalog(tmp_path / "src")
 
 
 def test_native_tree_layout(tmp_path):
@@ -145,17 +165,16 @@ def test_native_tree_layout(tmp_path):
     compile_catalog(FIX / "catalog_src", tmp_path, fake, make_cfg("native"))
     skills = tmp_path / ".claude" / "skills"
     tops = sorted(p.name for p in skills.iterdir())
-    assert tops == ["existing-agents", "reference-docs", "tables-and-data", "tools"]
-    assert list((skills / "tables-and-data").glob("*/INDEX.md"))  # 3 tables > leaf_max 2: split
+    assert tops == ["agent-syntax", "data-metadata", "reference-docs", "tools"]
+    assert list((skills / "data-metadata").glob("*/INDEX.md"))  # 3 docs > leaf_max 2: split
     ents = json.loads((tmp_path / "entity_index.json").read_text())
     tops_for_table = {p.split("/")[0] for p in ents["MSP_LOAN_MASTER7_CS"]["skill_paths"]}
-    assert tops_for_table == {"tables-and-data", "existing-agents"}  # the table, and the agent using it
+    assert tops_for_table == {"data-metadata"}
     # cards are cached by content: a rebuild makes no card calls
-    card_calls = sum(c["system"] == "You index catalog documents for a search tree. Be concrete and brief."
-                     for c in fake.calls)
+    card_calls = sum(c["system"].startswith("You index catalog") for c in fake.calls)
     fake2 = make_fake()
     compile_catalog(FIX / "catalog_src", tmp_path, fake2, make_cfg("native"))
-    assert card_calls == 7
+    assert card_calls == len(collect_catalog(FIX / "catalog_src"))
     assert not any(c["system"].startswith("You index catalog") for c in fake2.calls)
 
 
@@ -190,17 +209,35 @@ def test_navigator_blocks_path_escape(compiled_catalog):
 
 # ---------------------------------------------------------------- end to end
 
-def test_generate_end_to_end_matches_gold(compiled_catalog, tmp_path):
+GOLD_ONLY_TEXT = "State whether the deletion denial is supported and cite the letter date."
+
+
+def test_generate_end_to_end_then_compare(compiled_catalog, tmp_path):
+    assert GOLD_ONLY_TEXT in (FIX / "gold" / "pmi_ddn_icmp_process.yaml").read_text()
     fake = make_fake()
     out = tmp_path / "pmi_ddn"
     rep = generate(FIX / "procedure_sample.md", out, make_cfg(), fake,
-                   catalog_dir=compiled_catalog, workers=2)
+                   catalog_dir=compiled_catalog, workers=2, compare_with=FIX / "gold")
+
+    # existing YAMLs never reached the model: they are read only for the comparison
+    for call in fake.calls:
+        blob = json.dumps(call)
+        assert GOLD_ONLY_TEXT not in blob
+        assert "pmi_ddn_no_icmp_path_handler.yaml" not in blob
+
+    # every agent was written with its class's agent-syntax section in the prompt
+    ground_calls = [c for c in fake.calls if c["system"].startswith("You write the fields")]
+    first_prompts = [c["messages"][0]["content"] for c in ground_calls]
+    db_prompt = next(p for p in first_prompts if "(database_agent)" in p)
+    assert "O2A agent syntax for database_agent:" in db_prompt
+    assert "default_db_yaml` (string, required)" in db_prompt
 
     assert rep["errors"] == 0, rep["findings"]
+    assert not [f for f in rep["findings"] if f["code"] == "unknown-field"], rep["findings"]
     assert all(c["agent"] for c in rep["coverage"])  # every procedure step became an agent
 
     db = yaml.safe_load((out / "pmi_ddn_fetch_msp_loan_data.yaml").read_text())
-    block = yaml.safe_load(db["default_db_yaml"])  # embedded YAML string, like O2A
+    block = yaml.safe_load(db["default_db_yaml"])  # embedded YAML string, as the syntax requires
     assert block["connection"]["url"] == "${ENV:ECRM_DB_CONN}"
     assert ":loan_number" in block["query"] and db["input_keys"] == ["loan_number"]
 
@@ -210,19 +247,52 @@ def test_generate_end_to_end_matches_gold(compiled_catalog, tmp_path):
     assert set(verdict["input_keys"]) == {"pmi_ddn_msp_loan_data", "pmi_ddn_icmp_review"}
 
     gate = yaml.safe_load((out / "pmi_ddn_approval_gate.yaml").read_text())
-    assert gate["resume_event"] == "supervisor_approval"  # runtime field copied via `extra`
+    assert gate["resume_event"] == "supervisor_approval"  # required by the agent syntax
 
     router = yaml.safe_load((out / "pmi_ddn_icmp_decision_router.yaml").read_text())
     assert [r["target_agent"] for r in router["routes"]] == \
         [s["name"] for s in router["sub_agents"]]
 
-    cmp = compare_dirs(FIX / "gold", out)
+    cmp = rep["comparison"]
     assert cmp["class_agreement"] == 1.0
     assert cmp["db_table_agreement"] == 1.0
     assert cmp["coverage"] == 1.0 and not cmp["extra_generated_agents"]
-
-    assert (tmp_path / "pmi_ddn_report.json").exists()
+    assert json.loads((tmp_path / "pmi_ddn_report.json").read_text())["comparison"] == cmp
     assert (tmp_path / "pmi_ddn_steps.json").exists()
+
+
+def test_generate_without_existing_yamls_has_no_comparison(compiled_catalog, tmp_path):
+    rep = generate(FIX / "procedure_sample.md", tmp_path / "p", make_cfg(), make_fake(),
+                   catalog_dir=compiled_catalog)
+    assert "comparison" not in rep and rep["errors"] == 0
+
+
+def test_generate_refuses_catalog_with_existing_agents(compiled_catalog, tmp_path):
+    shutil.copytree(compiled_catalog, tmp_path / "cat")
+    idx_path = tmp_path / "cat" / "catalog_index.json"
+    idx = json.loads(idx_path.read_text())
+    idx["a0000000000000"] = {"id": "a0000000000000", "kind": "agent", "name": "old", "source": "x"}
+    idx_path.write_text(json.dumps(idx))
+    with pytest.raises(ValueError, match="existing agent"):
+        generate(FIX / "procedure_sample.md", tmp_path / "out", make_cfg(), make_fake(),
+                 catalog_dir=tmp_path / "cat")
+
+
+def test_generate_refuses_compare_dir_as_output(tmp_path):
+    shutil.copytree(FIX / "gold", tmp_path / "gold")
+    with pytest.raises(ValueError, match="output directory"):
+        generate(FIX / "procedure_sample.md", tmp_path / "gold", make_cfg(), make_fake(),
+                 overwrite=True, compare_with=tmp_path / "gold")
+    assert len(list((tmp_path / "gold").glob("*.yaml"))) == 10  # nothing deleted
+
+
+def test_validator_flags_fields_outside_agent_syntax(tmp_path):
+    shutil.copytree(FIX / "gold", tmp_path / "p")
+    gate = tmp_path / "p" / "pmi_ddn_approval_gate.yaml"
+    gate.write_text(gate.read_text() + "retry_forever: true\n")
+    syntax = {"agent_gate": "resume_event, timeout_hours, output_key"}
+    codes = [(f.code, f.agent) for f in validate_dir(tmp_path / "p", ["loan_number"], syntax)]
+    assert ("unknown-field", "pmi_ddn_approval_gate") in codes
 
 
 def test_generate_refuses_to_clobber(tmp_path):

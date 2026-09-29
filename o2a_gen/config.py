@@ -12,8 +12,8 @@ MODEL_ROLES = (
     "extract",          # procedure document -> structured steps
     "ground",           # step + retrieved catalog docs -> agent fields (SQL, transform, prompt)
     "navigate",         # browses the compiled catalog skill tree
-    "catalog_summary",  # Corpus2Skill cluster summaries, labels, repartition, entities
-    "catalog_cards",    # Corpus2Skill per-document summary cards
+    "catalog_summary",  # catalog compile: folder names and summaries
+    "catalog_cards",    # catalog compile: per-document title, summary, keywords
     "llm_agent",        # value written into `model:` of generated LlmAgent YAMLs
 )
 
