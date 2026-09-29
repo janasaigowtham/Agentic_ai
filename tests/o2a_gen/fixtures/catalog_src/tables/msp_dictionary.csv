@@ -1,0 +1,6 @@
+table,column,type,description
+MSP_LOAN_MASTER7_CS,LN_NO,CHAR(10),Loan number left-padded with zeros to 10 characters
+MSP_LOAN_MASTER7_CS,INV_CLASS_CODE,CHAR(3),Investor class code
+MSP_LOAN_MASTER7_CS,LETTER_EFFECTIVE_DATE,DATE,ICMP letter effective date; null when no letter was sent
+MSP_PMI_HISTORY,LN_NO,CHAR(10),Loan number
+MSP_PMI_HISTORY,PMI_STATUS,CHAR(1),Current PMI status code

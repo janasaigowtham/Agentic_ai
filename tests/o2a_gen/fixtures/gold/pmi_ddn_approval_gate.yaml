@@ -1,0 +1,3 @@
+name: pmi_ddn_approval_gate
+agent_class: agent_gate
+output_key: pmi_ddn_approval_status

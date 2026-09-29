@@ -1,0 +1,39 @@
+# o2a_gen configuration. Copy to gen_config.yaml and edit.
+
+llm:
+  provider: callable                                   # callable | fake (dry run)
+  chat: o2a_gen.providers.tachyon_provider:chat        # module:function
+  embed: o2a_gen.providers.tachyon_provider:embed      # only used if embedding.provider = llm
+  max_concurrency: 8                                   # parallel calls to Tachyon
+
+# Model identifiers exactly as Tachyon expects them. Use the same names you put
+# in the `model:` field of your existing LlmAgent YAMLs.
+models:
+  extract: REPLACE_WITH_TACHYON_MODEL          # reads the procedure, needs a strong model
+  ground: REPLACE_WITH_TACHYON_MODEL           # writes SQL / transforms / prompts
+  navigate: REPLACE_WITH_TACHYON_MODEL         # browses the catalog tree, many short turns
+  catalog_summary: REPLACE_WITH_TACHYON_MODEL  # compile-time cluster summaries
+  catalog_cards: REPLACE_WITH_TACHYON_MODEL    # compile-time, one call per catalog doc: a cheap model is fine
+  llm_agent: REPLACE_WITH_TACHYON_MODEL        # written into generated LlmAgent YAMLs
+
+embedding:
+  provider: local                  # local = sentence-transformers on this machine; llm = llm.embed above
+  model: Qwen/Qwen3-Embedding-0.6B # for local: a model name or a path to an internally mirrored copy
+
+catalog:                           # passed to Corpus2Skill's compiler
+  p: 10                            # children per node
+  max_top: 8                       # top-level skills
+  min_cluster_size: 3
+  use_doc_summaries: true
+
+generation:
+  prefix: pmi_ddn                  # agent / session-key name prefix
+  pipeline_inputs: [loan_number]   # session keys supplied by the caller, not produced by any agent
+  default_db_type: teradata
+  default_connection_env: ECRM_DB_CONN   # used when the catalog doesn't say which connection a table uses
+  navigate_max_turns: 12
+  # Extra fields merged into every generated agent of that class, for runtime
+  # settings the procedure can't tell us (timeouts, gate events, retries, ...).
+  agent_templates:
+    LlmAgent: {}
+    agent_gate: {}

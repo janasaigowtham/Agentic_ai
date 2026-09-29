@@ -1,0 +1,122 @@
+"""A scripted stand-in for Tachyon that answers each o2a_gen prompt type.
+
+It returns what a well-behaved model would, so the tests exercise the real
+parsing, validation, retry, navigation, YAML and Corpus2Skill code paths.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+
+from o2a_gen.llm import FakeLLM
+from o2a_gen.navigator import NAV_SYSTEM
+from o2a_gen.procedure import EXTRACT_SYSTEM
+
+PROCEDURE_JSON = {
+    "name": "pmi_ddn_review",
+    "description": "Decide whether a PMI deletion denial is supported.",
+    "inputs": ["loan_number"],
+    "phases": [
+        {"id": "P1", "title": "Pre-process", "steps": [
+            {"id": "S1", "title": "Fetch MSP loan data", "kind": "lookup", "source_lines": "10",
+             "text": "Pull the loan from MSP: investor class code and the ICMP letter effective date.",
+             "produces": "msp loan data", "uses": ["loan_number"]},
+            {"id": "S2", "title": "ICMP required flag", "kind": "compute", "source_lines": "11",
+             "text": "Y if the letter effective date is present, otherwise N.",
+             "produces": "icmp required flag", "uses": ["S1"]},
+        ]},
+        {"id": "P2", "title": "ICMP check", "steps": [
+            {"id": "S3", "title": "ICMP decision", "kind": "decision", "source_lines": "14-16",
+             "text": "Branch on whether an ICMP letter applies.", "depends_on": "S2", "uses": ["S2"],
+             "branches": [
+                 {"label": "icmp process", "when": "flag is Y", "steps": [
+                     {"id": "S4", "title": "ICMP process", "kind": "review", "source_lines": "14-15",
+                      "text": "Review the ICMP letter against investor guidelines.",
+                      "produces": "icmp review", "uses": ["S1"]}]},
+                 {"label": "no icmp path handler", "when": "flag is N", "steps": [
+                     {"id": "S5", "title": "No ICMP path handler", "kind": "compute",
+                      "source_lines": "16", "text": "Record that no ICMP review is needed.",
+                      "produces": "icmp review", "uses": []}]},
+             ]},
+        ]},
+        {"id": "P3", "title": "Approval", "steps": [
+            {"id": "S6", "title": "Approval gate", "kind": "approval", "source_lines": "19",
+             "text": "Send the case to a supervisor for approval.", "produces": "approval status"}]},
+        {"id": "P4", "title": "Post-process", "steps": [
+            {"id": "S7", "title": "Verdict synthesizer", "kind": "review", "source_lines": "22",
+             "text": "Write the denial verdict summary citing the loan data and ICMP review.",
+             "produces": "verdict", "uses": ["S1", "S4"]}]},
+    ],
+}
+
+_AGENT = re.compile(r"Agent to write: `(\w+)` \((\w+)\)")
+_OUT = re.compile(r"output_key: (\w+)")
+_BRANCH = re.compile(r"^- (.+?): when .+? -> (\w+)$", re.M)
+
+
+def _nav(system, messages):
+    if len(messages) == 1:
+        q = messages[0]["content"]
+        term = "MSP_LOAN_MASTER7_CS" if "Pull the loan" in q else "pmi_ddn"
+        return {"action": "find", "term": term}
+    ids = re.findall(r"doc `(\w+)`", messages[-1]["content"])
+    return {"action": "done", "doc_ids": ids[:2], "notes": "found via find"}
+
+
+def _ground(system, messages):
+    prompt = messages[0]["content"]
+    name, cls = _AGENT.search(prompt).groups()
+    out_key = _OUT.search(prompt).group(1)
+    retrying = len(messages) > 1
+    if cls == "database_agent":
+        return {"db_type": "teradata", "connection_env": "ECRM_DB_CONN",
+                "query": ("SELECT M7.LN_NO, TRIM(M7.INV_CLASS_CODE) AS inv_class_code,\n"
+                          "       M7.LETTER_EFFECTIVE_DATE AS letter_effective_date\n"
+                          "FROM MSP_LOAN_MASTER7_CS M7\n"
+                          "WHERE M7.LN_NO = LPAD(TRIM(CAST(:loan_number AS VARCHAR(10))), 10, '0')"),
+                "params": ["loan_number"], "description": "Fetch MSP loan fields.", "gaps": ""}
+    if cls == "slv_transformation_agent":
+        if "flag" in out_key:
+            expr = {"$cond": {"if": {"left": "{{ pmi_ddn_msp_loan_data[0].letter_effective_date }}",
+                                     "op": "not_null"}, "then": "Y", "else": "N"}}
+            return {"transform": {out_key: expr}, "input_keys": ["pmi_ddn_msp_loan_data"],
+                    "strict": False, "description": "Y when an ICMP letter exists."}
+        return {"transform": {out_key: "NO_ICMP_REVIEW_REQUIRED"}, "input_keys": [],
+                "description": "Record that no ICMP review is needed."}
+    if cls == "LlmAgent":
+        if "verdict" in name and not retrying:
+            # First answer references a key that does not exist; the validator must reject it.
+            return {"instruction": "Write the verdict using {pmi_ddn_borrower_ssn} and nothing else "
+                                   "at all, in a paragraph.", "input_keys": []}
+        extra = " and the ICMP review {pmi_ddn_icmp_review}" if "verdict" in name else ""
+        return {"instruction": ("Review the loan data {pmi_ddn_msp_loan_data}" + extra +
+                                ". Cite the letter effective date. ABSOLUTE RULE: never fabricate."),
+                "input_keys": [], "tools": ["fetch_loan_document"] if "icmp" in name else [],
+                "description": "Review step."}
+    if cls == "decision_router_agent":
+        routes = []
+        for i, (label, _target) in enumerate(_BRANCH.findall(prompt)):
+            routes.append({"branch": label, "priority": 10 * (i + 1), "conditions": [
+                {"context_key": "pmi_ddn_icmp_required_flag", "operator": "eq",
+                 "value": "Y" if i == 0 else "N"}]})
+        return {"routes": routes, "description": "Route on the ICMP flag."}
+    return {"description": "Wait for supervisor approval.", "extra": {"resume_event": "supervisor_approval"}}
+
+
+def _c2s(system, messages):
+    """Corpus2Skill compile-time prompts (cards, summaries, labels, repartition, entities)."""
+    text = messages[-1]["content"]
+    if "filesystem-safe label" in text:
+        return "msp-loan-catalog"
+    return json.dumps({"title": "Catalog item", "one_line": "An MSP catalog item.",
+                       "phrases": ["MSP"], "changes": [], "named_entities": ["MSP_LOAN_MASTER7_CS"],
+                       "doc_types": ["table"]})
+
+
+def make_fake() -> FakeLLM:
+    return FakeLLM(rules=[
+        (lambda s, u: s == EXTRACT_SYSTEM, PROCEDURE_JSON),
+        (lambda s, u: s == NAV_SYSTEM, _nav),
+        (lambda s, u: s.startswith("You write the fields of one agent"), _ground),
+    ], default=_c2s)

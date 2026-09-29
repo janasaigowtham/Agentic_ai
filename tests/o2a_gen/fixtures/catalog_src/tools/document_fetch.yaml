@@ -1,0 +1,5 @@
+name: fetch_loan_document
+description: Retrieves a scanned loan document (e.g. the ICMP letter) by loan number and document type.
+parameters:
+  loan_number: string
+  document_type: string

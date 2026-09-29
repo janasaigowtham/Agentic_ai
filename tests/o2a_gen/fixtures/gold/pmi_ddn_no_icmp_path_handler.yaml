@@ -1,0 +1,5 @@
+name: pmi_ddn_no_icmp_path_handler
+agent_class: slv_transformation_agent
+output_key: pmi_ddn_icmp_review
+transform:
+  pmi_ddn_icmp_review: NO_ICMP_REVIEW_REQUIRED

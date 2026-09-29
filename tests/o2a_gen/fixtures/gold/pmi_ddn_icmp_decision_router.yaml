@@ -1,0 +1,19 @@
+name: pmi_ddn_icmp_decision_router
+agent_class: decision_router_agent
+output_key: routing_decision
+routes:
+  - conditions:
+      - context_key: pmi_ddn_icmp_required_flag
+        operator: eq
+        value: Y
+    target_agent: pmi_ddn_icmp_process
+    priority: 10
+  - conditions:
+      - context_key: pmi_ddn_icmp_required_flag
+        operator: eq
+        value: N
+    target_agent: pmi_ddn_no_icmp_path_handler
+    priority: 20
+sub_agents:
+  - name: pmi_ddn_icmp_process
+  - name: pmi_ddn_no_icmp_path_handler

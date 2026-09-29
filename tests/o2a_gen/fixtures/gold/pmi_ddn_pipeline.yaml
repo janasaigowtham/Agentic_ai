@@ -1,0 +1,9 @@
+name: pmi_ddn_pipeline
+version: '2.0'
+output_key: pmi_ddn_final_output
+agent_class: resumable_orchestrator
+sub_agents:
+  - name: pmi_ddn_pre_process
+  - name: pmi_ddn_icmp_decision_router
+  - name: pmi_ddn_approval_gate
+  - name: pmi_ddn_post_process

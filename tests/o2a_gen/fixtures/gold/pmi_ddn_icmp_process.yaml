@@ -1,0 +1,8 @@
+name: pmi_ddn_icmp_process
+agent_class: LlmAgent
+model: sample-model
+input_keys: [pmi_ddn_msp_loan_data]
+output_key: pmi_ddn_icmp_review
+instruction: |
+  Review the ICMP letter for loan data {pmi_ddn_msp_loan_data} against the investor
+  guidelines. State whether the deletion denial is supported and cite the letter date.

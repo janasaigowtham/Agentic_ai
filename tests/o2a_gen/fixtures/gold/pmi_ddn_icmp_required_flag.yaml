@@ -1,0 +1,13 @@
+name: pmi_ddn_icmp_required_flag
+agent_class: slv_transformation_agent
+input_keys: [pmi_ddn_msp_loan_data]
+output_key: pmi_ddn_icmp_required_flag
+strict: false
+transform:
+  pmi_ddn_icmp_required_flag:
+    $cond:
+      if:
+        left: '{{ pmi_ddn_msp_loan_data[0].letter_effective_date }}'
+        op: not_null
+      then: Y
+      else: N

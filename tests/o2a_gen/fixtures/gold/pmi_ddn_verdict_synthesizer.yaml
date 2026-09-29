@@ -1,0 +1,8 @@
+name: pmi_ddn_verdict_synthesizer
+agent_class: LlmAgent
+model: sample-model
+input_keys: [pmi_ddn_msp_loan_data, pmi_ddn_icmp_review]
+output_key: pmi_ddn_verdict
+instruction: |
+  Write the PMI deletion denial verdict. Cite the loan data {pmi_ddn_msp_loan_data}
+  and the ICMP review outcome {pmi_ddn_icmp_review}. ABSOLUTE RULE: never fabricate facts.
