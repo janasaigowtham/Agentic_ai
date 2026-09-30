@@ -86,7 +86,7 @@ cp o2a_gen/gen_config.example.yaml gen_config.yaml
    reference) and the procedure's sections, so the two can be compared.
    - `embedding.provider: local` runs sentence-transformers on this machine's GPU
      (`pip install sentence-transformers` plus a CUDA build of torch). The example config is set
-     up for `nvidia/Nemotron-3-Embed-8B-BF16`: `trust_remote_code`, bfloat16 (about 16 GB of GPU
+     up for `nvidia/Nemotron-3-Embed-8B-BF16` (the Hugging Face ID; DeepInfra's is `nvidia/Nemotron-3-Embed-8B`): `trust_remote_code`, bfloat16 (about 16 GB of GPU
      memory), optional `dimensions` to keep the first N of its 4096 dimensions, and a
      `query_template` used only when matching procedure sections to the catalog. Documents are
      always embedded without a prefix. The model is loaded once per run.

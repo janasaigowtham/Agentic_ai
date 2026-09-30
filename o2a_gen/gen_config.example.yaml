@@ -21,7 +21,7 @@ models:
 # document_template means rebuilding the catalog (compile-catalog); old vectors are then ignored.
 embedding:
   provider: llm                    # llm = the llm.embed function above (DeepInfra); local = sentence-transformers on a GPU
-  model: nvidia/Nemotron-3-Embed-8B-BF16   # the ID as DeepInfra lists it (their API page shows nvidia/Nemotron-3-Embed-8B)
+  model: nvidia/Nemotron-3-Embed-8B        # DeepInfra's ID (4096-dim). For provider: local use nvidia/Nemotron-3-Embed-8B-BF16
   batch_size: 32                   # texts per API call
   dimensions: 1024                 # optional: keep the first N of 4096 dims (smaller vectors.npy)
   # For provider: local only (self-hosted, ~16 GB GPU):

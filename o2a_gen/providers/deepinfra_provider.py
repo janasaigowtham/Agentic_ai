@@ -6,7 +6,7 @@ Config:
       embed: o2a_gen.providers.deepinfra_provider:embed
     embedding:
       provider: llm
-      model: nvidia/Nemotron-3-Embed-8B-BF16    # the model ID as DeepInfra lists it
+      model: nvidia/Nemotron-3-Embed-8B    # DeepInfra's ID (verified: 4096-dim vectors)
 
 Environment:
     DEEPINFRA_API_KEY    required. Never put the key in config files or the repo.
