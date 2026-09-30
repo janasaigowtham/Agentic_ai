@@ -1,14 +1,9 @@
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>o2a_gen Architecture</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=Source+Sans+3:wght@400;600&family=JetBrains+Mono:wght@400;500&display=swap">
 <style>
-/* Layout: single engineering-document column; wide diagram in its own scroller; reference tables below. */
+/* Layout: single engineering-document column; wide diagram in its own scroller; stage cards and reference tables below. */
 :root {
   --bg: #f5f7fa;
   --surface: #ffffff;
@@ -22,6 +17,7 @@
   --emb: #6b3fa0;
   --emb-soft: #efe6f8;
   --ok: #2c7a4b;
+  --ok-soft: #e2f3e8;
   --warn-soft: #fdf3e1;
   --font-display: "Archivo", "Helvetica Neue", Arial, sans-serif;
   --font-body: "Source Sans 3", "Segoe UI", Roboto, sans-serif;
@@ -31,14 +27,14 @@
   :root:not([data-theme="light"]) {
     --bg: #10141a; --surface: #171d25; --fg: #e4e9f0; --muted: #9aa6b6; --line: #2d3744;
     --accent: #7ea6ea; --accent-soft: #1c2a40; --llm: #f0a55a; --llm-soft: #33261a;
-    --emb: #c3a2ec; --emb-soft: #2a2138; --ok: #6cc592; --warn-soft: #2b2419;
+    --emb: #c3a2ec; --emb-soft: #2a2138; --ok: #6cc592; --ok-soft: #17291f; --warn-soft: #2b2419;
     color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
   --bg: #10141a; --surface: #171d25; --fg: #e4e9f0; --muted: #9aa6b6; --line: #2d3744;
   --accent: #7ea6ea; --accent-soft: #1c2a40; --llm: #f0a55a; --llm-soft: #33261a;
-  --emb: #c3a2ec; --emb-soft: #2a2138; --ok: #6cc592; --warn-soft: #2b2419;
+  --emb: #c3a2ec; --emb-soft: #2a2138; --ok: #6cc592; --ok-soft: #17291f; --warn-soft: #2b2419;
   color-scheme: dark;
 }
 * { box-sizing: border-box; }
@@ -47,8 +43,8 @@ body {
   font-family: var(--font-body); font-size: 16px; line-height: 1.55;
   padding-inline: 20px; padding-block: 40px 64px;
 }
-.wrap { max-width: 1120px; margin: 0 auto; display: grid; gap: 48px; }
-header { display: grid; gap: 10px; max-width: 70ch; }
+.wrap { max-width: 1120px; margin: 0 auto; display: grid; gap: 52px; }
+header { display: grid; gap: 12px; max-width: 72ch; }
 .eyebrow { font-family: var(--font-mono); font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); }
 h1 { font-family: var(--font-display); font-weight: 700; font-size: clamp(28px, 4vw, 40px); line-height: 1.1; margin: 0; text-wrap: balance; }
 h2 { font-family: var(--font-display); font-weight: 600; font-size: 22px; margin: 0; text-wrap: balance; }
@@ -56,785 +52,510 @@ h3 { font-family: var(--font-display); font-weight: 600; font-size: 16px; margin
 p { margin: 0; }
 .lede { color: var(--muted); font-size: 17px; }
 section { display: grid; gap: 16px; min-width: 0; }
-section > p { max-width: 70ch; }
+section > p { max-width: 72ch; }
 code, .mono { font-family: var(--font-mono); font-size: .86em; }
-code { background: var(--accent-soft); padding: 1px 5px; border-radius: 4px; }
+code { background: var(--accent-soft); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
+ul { margin: 0; padding-left: 20px; display: grid; gap: 4px; }
+.note { font-size: 14px; color: var(--muted); max-width: 72ch; }
+.callout { background: var(--warn-soft); border: 1px solid var(--line); border-radius: 8px; padding: 12px 16px; font-size: 15px; max-width: 80ch; }
 
 .legend { display: flex; flex-wrap: wrap; gap: 8px 18px; font-size: 14px; color: var(--muted); }
 .legend span { display: inline-flex; align-items: center; gap: 6px; }
-.chip { font-family: var(--font-mono); font-size: 11px; font-weight: 500; padding: 1px 6px; border-radius: 4px; }
+.chip { font-family: var(--font-mono); font-size: 11px; font-weight: 500; padding: 1px 6px; border-radius: 4px; white-space: nowrap; }
 .chip.llm { color: var(--llm); background: var(--llm-soft); }
 .chip.emb { color: var(--emb); background: var(--emb-soft); }
 .chip.det { color: var(--muted); background: var(--bg); border: 1px solid var(--line); }
+.chip.ok { color: var(--ok); background: var(--ok-soft); }
 
+/* diagram */
 .diagram { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
-.diagram svg { display: block; min-width: 1040px; width: 100%; height: auto; }
+.diagram svg { display: block; min-width: 1060px; width: 100%; height: auto; }
 svg .box { fill: var(--surface); stroke: var(--line); stroke-width: 1.2; }
 svg .box.io { fill: var(--bg); stroke-dasharray: 4 3; }
 svg .box.store { fill: var(--accent-soft); stroke: var(--accent); }
-svg .box.gate { fill: var(--llm-soft); stroke: var(--llm); }
+svg .box.llm { fill: var(--llm-soft); stroke: var(--llm); }
+svg .box.emb { fill: var(--emb-soft); stroke: var(--emb); }
+svg .box.rail { fill: var(--bg); stroke: var(--accent); stroke-dasharray: 3 3; }
+svg .lanebg { fill: var(--bg); }
 svg .t { fill: var(--fg); font-family: var(--font-display); font-size: 13px; font-weight: 600; }
 svg .f { fill: var(--muted); font-family: var(--font-mono); font-size: 10.5px; }
+svg .fl { fill: var(--llm); font-family: var(--font-mono); font-size: 10.5px; }
+svg .fe { fill: var(--emb); font-family: var(--font-mono); font-size: 10.5px; }
 svg .lane { fill: var(--accent); font-family: var(--font-mono); font-size: 11px; letter-spacing: .08em; }
-svg .note { fill: var(--muted); font-family: var(--font-body); font-size: 12px; }
+svg .cap { fill: var(--muted); font-family: var(--font-body); font-size: 12px; }
 svg .arrow { stroke: var(--muted); stroke-width: 1.4; fill: none; }
 svg .arrow.data { stroke: var(--accent); stroke-dasharray: 5 4; }
-svg .arrow.late { stroke: var(--ok); stroke-dasharray: 2 3; }
+svg .arrow.loop { stroke: var(--llm); }
 svg .head { fill: var(--muted); }
 svg .head.data { fill: var(--accent); }
-svg .head.late { fill: var(--ok); }
-svg .badge-llm rect { fill: var(--llm-soft); stroke: var(--llm); stroke-width: .8; }
-svg .badge-llm text { fill: var(--llm); font-family: var(--font-mono); font-size: 9.5px; font-weight: 500; }
-svg .badge-emb rect { fill: var(--emb-soft); stroke: var(--emb); stroke-width: .8; }
-svg .badge-emb text { fill: var(--emb); font-family: var(--font-mono); font-size: 9.5px; font-weight: 500; }
-svg .divider { stroke: var(--line); stroke-width: 1; stroke-dasharray: 2 4; }
+svg .head.loop { fill: var(--llm); }
 
-.table-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
-table { width: 100%; border-collapse: collapse; font-size: 14.5px; min-width: 720px; }
-th, td { text-align: left; vertical-align: top; padding: 10px 14px; border-bottom: 1px solid var(--line); }
-th { font-family: var(--font-mono); font-size: 11px; font-weight: 500; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); background: var(--bg); }
+/* stages */
+.stages { display: grid; gap: 14px; }
+.stage { display: grid; grid-template-columns: 56px minmax(0, 1fr); gap: 16px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 18px 20px; }
+.stage .n { font-family: var(--font-display); font-weight: 700; font-size: 30px; line-height: 1; color: var(--accent); font-variant-numeric: tabular-nums; }
+.stage .body { display: grid; gap: 10px; min-width: 0; }
+.stage .head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 10px; }
+.stage .io { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.stage .io > div { min-width: 0; font-size: 14.5px; }
+.stage .io b { display: block; font-family: var(--font-mono); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 500; margin-bottom: 2px; }
+.phase { font-family: var(--font-mono); font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); padding-top: 6px; }
+
+pre { margin: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; overflow-x: auto; font-family: var(--font-mono); font-size: 12.5px; line-height: 1.55; }
+pre .c { color: var(--muted); }
+pre .k { color: var(--accent); }
+pre .l { color: var(--llm); }
+
+.tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 14.5px; }
+th, td { text-align: left; vertical-align: top; padding: 9px 12px; border-bottom: 1px solid var(--line); }
+th { font-family: var(--font-mono); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 500; background: var(--bg); }
 tr:last-child td { border-bottom: 0; }
-td.mod { font-family: var(--font-mono); font-size: 13px; white-space: nowrap; }
-td.layer { color: var(--muted); white-space: nowrap; }
+td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
 
-.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
-.panel { border: 1px solid var(--line); border-radius: 8px; background: var(--surface); padding: 18px 20px; display: grid; gap: 10px; align-content: start; min-width: 0; }
-.panel ul { margin: 0; padding-left: 18px; display: grid; gap: 6px; }
-.panel pre { margin: 0; overflow-x: auto; font-family: var(--font-mono); font-size: 12.5px; line-height: 1.5; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 12px; }
-.panel.leaves { background: var(--warn-soft); }
-.muted { color: var(--muted); }
+/* cache bar */
+.cachebar { display: flex; width: 100%; min-width: 640px; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; font-family: var(--font-mono); font-size: 11px; }
+.cachebar div { padding: 8px 8px; border-right: 1px solid var(--line); min-width: 0; }
+.cachebar div:last-child { border-right: 0; }
+.cachebar .cached { background: var(--accent-soft); color: var(--fg); }
+.cachebar .bp { background: var(--accent); width: 4px; padding: 0; flex: 0 0 4px; }
+.cachebar .fresh { background: var(--surface); color: var(--muted); }
+.cachebar small { display: block; color: var(--muted); }
+.cachewrap { overflow-x: auto; }
 
-.checks { display: grid; gap: 0; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
-.check { display: grid; grid-template-columns: 150px 1fr; gap: 16px; padding: 14px 18px; border-bottom: 1px solid var(--line); }
-.check:last-child { border-bottom: 0; }
-.check .where { font-family: var(--font-mono); font-size: 12.5px; color: var(--accent); }
-@media (max-width: 560px) {
-  .check { grid-template-columns: 1fr; gap: 4px; }
+/* trace */
+.trace { display: grid; gap: 10px; }
+.tstep { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 14px; align-items: start; }
+.tstep > div:first-child { font-family: var(--font-mono); font-size: 12px; color: var(--muted); padding-top: 3px; }
+.tstep > div { min-width: 0; }
+
+.grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.grid2 > * { min-width: 0; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 16px 18px; display: grid; gap: 8px; align-content: start; }
+
+@media (max-width: 720px) {
+  .stage { grid-template-columns: 1fr; gap: 8px; }
+  .stage .io, .grid2 { grid-template-columns: 1fr; }
+  .tstep { grid-template-columns: 1fr; gap: 4px; }
 }
-.toc { display: flex; flex-wrap: wrap; gap: 6px; }
-.toc a { font-family: var(--font-mono); font-size: 12.5px; color: var(--accent); text-decoration: none; border: 1px solid var(--line); background: var(--surface); padding: 3px 9px; border-radius: 999px; }
-.toc a:hover, .toc a:focus-visible { border-color: var(--accent); outline: none; }
-h3.phase { font-size: 18px; margin-top: 12px; display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; }
-h3.phase .mono { font-size: 12.5px; font-weight: 400; overflow-wrap: anywhere; }
-.stage { border: 1px solid var(--line); border-radius: 8px; background: var(--surface); scroll-margin-top: 16px; }
-.stage-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 12px 18px; border-bottom: 1px solid var(--line); }
-.stage-head h3 { font-size: 16px; }
-.sid { font-family: var(--font-mono); font-size: 12px; font-weight: 500; color: var(--surface); background: var(--accent); border-radius: 4px; padding: 2px 7px; min-width: 30px; text-align: center; }
-.stage-head .file { font-family: var(--font-mono); font-size: 12px; color: var(--muted); margin-left: auto; }
-.stage-body { padding: 16px 18px 18px; display: grid; gap: 12px; min-width: 0; }
-.stage-body > p { max-width: 78ch; }
-.stage-body h4 { font-family: var(--font-display); font-weight: 600; font-size: 14.5px; margin: 6px 0 0; display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; }
-.stage-body h4 .mono { font-size: 11.5px; font-weight: 400; }
-.stage-body pre { margin: 0; overflow-x: auto; font-family: var(--font-mono); font-size: 12.5px; line-height: 1.55; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 12px 14px; }
-.stage-body ul, .stage-body ol { margin: 0; padding-left: 20px; display: grid; gap: 5px; max-width: 80ch; }
-dl.io { display: grid; grid-template-columns: 90px 1fr; gap: 8px 14px; margin: 0; }
-dl.io dt { font-family: var(--font-mono); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); padding-top: 3px; }
-dl.io dd { margin: 0; max-width: 80ch; min-width: 0; }
-dl.io dd ul { margin-top: 4px; }
-table.compact { min-width: 560px; }
-@media (max-width: 560px) {
-  dl.io { grid-template-columns: 1fr; gap: 2px; }
-  dl.io dd { margin-bottom: 8px; }
-  .stage-head .file { margin-left: 0; width: 100%; }
-}
-footer { color: var(--muted); font-size: 14px; max-width: 70ch; }
+a { color: var(--accent); }
+a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 </style>
-</head>
-<body>
 
 <div class="wrap">
-  <header>
-    <div class="eyebrow">Janasaigowtham/Agentic_ai · o2a_gen · branch claude/sharp-pascal-p3v95o</div>
-    <h1>o2a_gen Architecture</h1>
-    <p class="lede">How a review procedure, plus the O2A agent syntax, data metadata and tools, becomes a validated set of O2A agent YAMLs. Both the procedure and the catalog are compiled into skill trees (Corpus2Skill's compile-then-navigate), then each step is turned into an agent. The page covers the system view, then every stage end to end with real samples. Uses the compile-then-navigate technique from Corpus2Skill. Every model call goes through Tachyon.</p>
-  </header>
 
-  <section aria-labelledby="sys">
-    <h2 id="sys">System view</h2>
-    <div class="legend">
-      <span><span class="chip llm">LLM</span> calls a Tachyon model</span>
-      <span><span class="chip emb">EMB</span> embedding model</span>
-      <span><span class="chip det">code</span> no box badge: plain, deterministic code</span>
-      <span><svg width="34" height="10" aria-hidden="true"><line x1="0" y1="5" x2="34" y2="5" style="stroke:var(--accent);stroke-width:1.4;stroke-dasharray:5 4"/></svg> reads the compiled catalog</span>
-      <span><svg width="34" height="10" aria-hidden="true"><line x1="0" y1="5" x2="34" y2="5" style="stroke:var(--ok);stroke-width:1.4;stroke-dasharray:2 3"/></svg> read only after generation</span>
-    </div>
-    <div class="diagram">
-      <svg viewBox="0 0 1120 640" role="img" aria-labelledby="svgTitle svgDesc">
-        <title id="svgTitle">o2a_gen system diagram</title>
-        <desc id="svgDesc">Compile lane turns catalog sources into a skill-tree catalog with saved vectors. Generate lane first compiles the procedure into its own skill tree linked to the catalog by similarity, then extracts, plans, grounds, emits, validates and optionally compares with existing YAMLs. All model calls pass through the LLM gateway to Tachyon.</desc>
-        <defs>
-          <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head" d="M0,0 L10,5 L0,10 z"/></marker>
-          <marker id="ahd" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head data" d="M0,0 L10,5 L0,10 z"/></marker>
-          <marker id="ahl" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head late" d="M0,0 L10,5 L0,10 z"/></marker>
-        </defs>
+<header>
+  <div class="eyebrow">o2a_gen · design v2 · compile skills, then plan, write, review</div>
+  <h1>From a review procedure to O2A workflow YAMLs</h1>
+  <p class="lede">o2a_gen turns four inputs into a folder of O2A agent YAMLs: a procedure, its tools, its metadata and the agent syntax. It works the way Corpus2Skill does. First it compiles every input into browsable skill pages: Opus writes a summary card for each piece, and Nemotron embeddings group and cross-link the pieces. Then Opus agents browse those pages to plan the workflow, write each agent and review the result. The code only moves text, calls the two APIs and saves files. Every decision about the workflow comes from the models reading your inputs.</p>
+  <div class="legend">
+    <span><span class="chip llm">Opus 5.5</span> Anthropic API, claude-opus-5-5</span>
+    <span><span class="chip emb">Nemotron</span> DeepInfra, nvidia/Nemotron-3-Embed-8B</span>
+    <span><span class="chip det">code</span> harness only, no model</span>
+  </div>
+</header>
 
-        <!-- COMPILE LANE -->
-        <text class="lane" x="35" y="36">COMPILE · compile-catalog · once per catalog change</text>
-        <g>
-          <rect class="box io" x="35" y="54" width="150" height="72" rx="6"/>
-          <text class="t" x="47" y="81">catalog_src/</text>
-          <text class="f" x="47" y="99">schema/ metadata/</text>
-          <text class="f" x="47" y="114">tools/ reference/</text>
+<section>
+  <h2>End to end</h2>
+  <p>There are two phases. <b>Compile</b> runs once for each set of inputs and is cached by content hash, so editing one procedure section only re-cards and re-embeds that section. <b>Generate</b> runs Opus agents over the compiled skill store. None of the four inputs is interpreted by code. The model reads them.</p>
+  <div class="diagram">
+    <svg viewBox="0 0 1160 600" role="img" aria-labelledby="dgt">
+      <title id="dgt">Pipeline: four inputs are split, carded by Opus, embedded by Nemotron and organised into a skill store; a Planner, parallel Writers and a Reviewer then produce the workflow YAMLs.</title>
+      <defs>
+        <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head" d="M0,0 L10,5 L0,10 z"/></marker>
+        <marker id="ahd" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head data" d="M0,0 L10,5 L0,10 z"/></marker>
+        <marker id="ahl" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head loop" d="M0,0 L10,5 L0,10 z"/></marker>
+      </defs>
 
-          <rect class="box" x="215" y="54" width="150" height="72" rx="6"/>
-          <text class="t" x="227" y="81">Collect &amp; split</text>
-          <text class="f" x="227" y="99">catalog.py</text>
-          <text class="f" x="227" y="114">one doc per item</text>
+      <rect class="lanebg" x="10" y="10" width="1140" height="262" rx="6"/>
+      <text class="lane" x="24" y="32">COMPILE · ONCE PER INPUT SET · CACHED BY CONTENT HASH</text>
+      <rect class="lanebg" x="10" y="290" width="1140" height="300" rx="6"/>
+      <text class="lane" x="24" y="312">GENERATE · OPUS AGENTS BROWSING THE SKILL STORE</text>
 
-          <rect class="box" x="395" y="54" width="150" height="72" rx="6"/>
-          <text class="t" x="407" y="81">Doc cards</text>
-          <text class="f" x="407" y="99">skilltree.py</text>
-          <text class="f" x="407" y="114">title/summary/keys</text>
-          <g class="badge-llm"><rect x="508" y="58" width="30" height="13" rx="3"/><text x="513" y="68">LLM</text></g>
+      <!-- inputs -->
+      <rect class="box io" x="24" y="52" width="170" height="44" rx="5"/>
+      <text class="t" x="36" y="71">procedure.md</text><text class="f" x="36" y="87">AMBC1: 35 KB, 40 headings</text>
+      <rect class="box io" x="24" y="104" width="170" height="44" rx="5"/>
+      <text class="t" x="36" y="123">tools.yaml</text><text class="f" x="36" y="139">REST + SQL tool calls</text>
+      <rect class="box io" x="24" y="156" width="170" height="44" rx="5"/>
+      <text class="t" x="36" y="175">metadata.yaml</text><text class="f" x="36" y="191">tables, fields, hints</text>
+      <rect class="box io" x="24" y="208" width="170" height="44" rx="5"/>
+      <text class="t" x="36" y="227">agent_syntax.md</text><text class="f" x="36" y="243">12 agent classes, §14</text>
 
-          <rect class="box" x="575" y="54" width="150" height="72" rx="6"/>
-          <text class="t" x="587" y="81">Embed</text>
-          <text class="f" x="587" y="99">embed_texts()</text>
-          <text class="f" x="587" y="114">vectors saved</text>
-          <g class="badge-emb"><rect x="688" y="58" width="30" height="13" rx="3"/><text x="693" y="68">EMB</text></g>
+      <path class="arrow" d="M194 74 C214 74 214 150 232 150" marker-end="url(#ah)"/>
+      <path class="arrow" d="M194 126 C212 126 212 150 232 150" marker-end="url(#ah)"/>
+      <path class="arrow" d="M194 178 C212 178 212 150 232 150" marker-end="url(#ah)"/>
+      <path class="arrow" d="M194 230 C214 230 214 150 232 150" marker-end="url(#ah)"/>
 
-          <rect class="box" x="755" y="54" width="150" height="72" rx="6"/>
-          <text class="t" x="767" y="81">Partition</text>
-          <text class="f" x="767" y="99">by kind, then</text>
-          <text class="f" x="767" y="114">cosine k-means</text>
+      <!-- compile chain -->
+      <rect class="box" x="234" y="96" width="150" height="108" rx="6"/>
+      <text class="t" x="248" y="120">1 Split</text>
+      <text class="f" x="248" y="140">md: by heading</text>
+      <text class="f" x="248" y="156">yaml/json: by path</text>
+      <text class="f" x="248" y="172">keeps line / path refs</text>
+      <text class="f" x="248" y="192">≈100 documents</text>
 
-          <rect class="box" x="935" y="54" width="150" height="72" rx="6"/>
-          <text class="t" x="947" y="81">Describe &amp; write</text>
-          <text class="f" x="947" y="99">folder name+summary</text>
-          <text class="f" x="947" y="114">name index (no LLM)</text>
-          <g class="badge-llm"><rect x="1048" y="58" width="30" height="13" rx="3"/><text x="1053" y="68">LLM</text></g>
+      <path class="arrow" d="M384 150 L414 150" marker-end="url(#ah)"/>
+      <rect class="box llm" x="416" y="96" width="160" height="108" rx="6"/>
+      <text class="t" x="430" y="120">2 Card</text>
+      <text class="fl" x="430" y="140">Opus · Batch API</text>
+      <text class="f" x="430" y="156">title, summary, names,</text>
+      <text class="f" x="430" y="172">provides / needs,</text>
+      <text class="f" x="430" y="188">decisions, outcomes</text>
 
-          <path class="arrow" d="M185 90 H213" marker-end="url(#ah)"/>
-          <path class="arrow" d="M365 90 H393" marker-end="url(#ah)"/>
-          <path class="arrow" d="M545 90 H573" marker-end="url(#ah)"/>
-          <path class="arrow" d="M725 90 H753" marker-end="url(#ah)"/>
-          <path class="arrow" d="M905 90 H933" marker-end="url(#ah)"/>
-        </g>
+      <path class="arrow" d="M576 150 L606 150" marker-end="url(#ah)"/>
+      <rect class="box emb" x="608" y="96" width="160" height="108" rx="6"/>
+      <text class="t" x="622" y="120">3 Embed</text>
+      <text class="fe" x="622" y="140">Nemotron · DeepInfra</text>
+      <text class="f" x="622" y="156">card + raw text</text>
+      <text class="f" x="622" y="172">1024 dims, unit length</text>
+      <text class="f" x="622" y="188">vectors.npy cache</text>
 
-        <!-- CATALOG STORE -->
-        <rect class="box store" x="470" y="178" width="615" height="84" rx="6"/>
-        <text class="t" x="486" y="202">Compiled catalog  (--out catalog_build/)</text>
-        <text class="f" x="486" y="222">.claude/skills/&lt;folder&gt;/SKILL.md · INDEX.md    ← browsed</text>
-        <text class="f" x="486" y="238">documents.json · entity_index.json · catalog_index.json</text>
-        <text class="f" x="486" y="254">cards.json (cache) · vectors.npy (saved) · build_meta.json</text>
-        <path class="arrow" d="M1010 126 V176" marker-end="url(#ah)"/>
+      <path class="arrow" d="M768 150 L798 150" marker-end="url(#ah)"/>
+      <rect class="box" x="800" y="96" width="176" height="108" rx="6"/>
+      <text class="t" x="814" y="120">4 Organise &amp; link</text>
+      <text class="f" x="814" y="140">tree: headings / k-means</text>
+      <text class="fl" x="814" y="156">folder pages (Opus)</text>
+      <text class="fe" x="814" y="172">cross-links (cosine)</text>
+      <text class="f" x="814" y="188">name index (exact)</text>
 
-        <line class="divider" x1="20" y1="276" x2="1100" y2="276"/>
+      <path class="arrow" d="M976 150 L1006 150" marker-end="url(#ah)"/>
+      <rect class="box store" x="1008" y="70" width="130" height="160" rx="6"/>
+      <text class="t" x="1020" y="94">Skill store</text>
+      <text class="f" x="1020" y="114">procedure/</text>
+      <text class="f" x="1020" y="130">tools/</text>
+      <text class="f" x="1020" y="146">metadata/</text>
+      <text class="f" x="1020" y="162">agent-syntax/</text>
+      <text class="f" x="1020" y="184">documents.json</text>
+      <text class="f" x="1020" y="200">links.json</text>
+      <text class="f" x="1020" y="216">names.json</text>
 
-        <!-- GENERATE LANE -->
-        <text class="lane" x="196" y="478">GENERATE · generate · per procedure</text>
-        <g>
-          <rect class="box" x="39" y="336" width="130" height="72" rx="6"/>
-          <text class="t" x="51" y="363">1 Compile</text>
-          <text class="f" x="51" y="381">proctree.py</text>
-          <text class="f" x="51" y="396">sections·embed</text>
-          <g class="badge-llm"><rect x="100" y="340" width="30" height="13" rx="3"/><text x="105" y="350">LLM</text></g>
-          <g class="badge-emb"><rect x="134" y="340" width="30" height="13" rx="3"/><text x="139" y="350">EMB</text></g>
+      <!-- harness rail -->
+      <path class="arrow data" d="M1073 230 L1073 342 L884 342" marker-end="url(#ahd)"/>
+      <rect class="box rail" x="234" y="326" width="648" height="34" rx="5"/>
+      <text class="f" x="248" y="347">agent tools:  ls · read · find · get_document · write_yaml · read_yaml · note_placeholder · submit_*</text>
+      <text class="fe" x="760" y="347">find → Nemotron</text>
 
-          <rect class="box" x="191" y="336" width="130" height="72" rx="6"/>
-          <text class="t" x="203" y="363">2 Extract</text>
-          <text class="f" x="203" y="381">procedure.py</text>
-          <text class="f" x="203" y="396">text + outline</text>
-          <g class="badge-llm"><rect x="284" y="340" width="30" height="13" rx="3"/><text x="289" y="350">LLM</text></g>
+      <path class="arrow data" d="M318 360 L318 386" marker-end="url(#ahd)"/>
+      <path class="arrow data" d="M556 360 L556 386" marker-end="url(#ahd)"/>
+      <path class="arrow data" d="M794 360 L794 386" marker-end="url(#ahd)"/>
 
-          <rect class="box" x="343" y="336" width="130" height="72" rx="6"/>
-          <text class="t" x="355" y="363">3 Plan</text>
-          <text class="f" x="355" y="381">plan.py</text>
-          <text class="f" x="355" y="396">tree, names, keys</text>
+      <!-- agents -->
+      <rect class="box llm" x="234" y="388" width="170" height="112" rx="6"/>
+      <text class="t" x="248" y="412">5 Planner</text>
+      <text class="fl" x="248" y="432">Opus · effort high</text>
+      <text class="f" x="248" y="448">reads procedure tree</text>
+      <text class="f" x="248" y="464">follows links to sources</text>
+      <text class="f" x="248" y="484">→ plan.json</text>
 
-          <rect class="box" x="495" y="336" width="130" height="72" rx="6"/>
-          <text class="t" x="507" y="363">4 Ground</text>
-          <text class="f" x="507" y="381">navigator.py</text>
-          <text class="f" x="507" y="396">ground.py</text>
-          <g class="badge-llm"><rect x="588" y="340" width="30" height="13" rx="3"/><text x="593" y="350">LLM</text></g>
+      <path class="arrow" d="M404 444 L456 444" marker-end="url(#ah)"/>
+      <rect class="box llm" x="470" y="380" width="180" height="112" rx="6"/>
+      <rect class="box llm" x="464" y="384" width="180" height="112" rx="6"/>
+      <rect class="box llm" x="458" y="388" width="180" height="112" rx="6"/>
+      <text class="t" x="472" y="412">6 Writers × N</text>
+      <text class="fl" x="472" y="432">Opus · effort medium</text>
+      <text class="f" x="472" y="448">one per planned agent</text>
+      <text class="f" x="472" y="464">parallel, shared cache</text>
+      <text class="f" x="472" y="484">→ agents/*.yaml</text>
 
-          <rect class="box" x="647" y="336" width="130" height="72" rx="6"/>
-          <text class="t" x="659" y="363">5 Emit</text>
-          <text class="f" x="659" y="381">emit.py</text>
-          <text class="f" x="659" y="396">1 YAML per agent</text>
+      <path class="arrow" d="M650 444 L706 444" marker-end="url(#ah)"/>
+      <rect class="box llm" x="708" y="388" width="176" height="112" rx="6"/>
+      <text class="t" x="722" y="412">7 Reviewer</text>
+      <text class="fl" x="722" y="432">Opus · fresh context</text>
+      <text class="f" x="722" y="448">§14 checklist, key flow,</text>
+      <text class="f" x="722" y="464">procedure coverage</text>
+      <text class="f" x="722" y="484">→ findings</text>
 
-          <rect class="box" x="799" y="336" width="130" height="72" rx="6"/>
-          <text class="t" x="811" y="363">6 Validate</text>
-          <text class="f" x="811" y="381">validate.py</text>
-          <text class="f" x="811" y="396">keys, refs, syntax</text>
+      <path class="arrow loop" d="M790 500 C790 560 556 560 556 504" marker-end="url(#ahl)"/>
+      <text class="cap" x="600" y="572">blocking findings go back to that agent's writer (≤ 2 rounds)</text>
 
-          <rect class="box" x="951" y="336" width="130" height="72" rx="6"/>
-          <text class="t" x="963" y="363">7 Compare</text>
-          <text class="f" x="963" y="381">compare.py</text>
-          <text class="f" x="963" y="396">optional</text>
+      <path class="arrow" d="M884 444 L920 444" marker-end="url(#ah)"/>
+      <rect class="box io" x="922" y="380" width="216" height="124" rx="6"/>
+      <text class="t" x="936" y="404">8 Outputs</text>
+      <text class="f" x="936" y="424">agents/*.yaml</text>
+      <text class="f" x="936" y="440">plan.md · review.md</text>
+      <text class="f" x="936" y="456">placeholders.md (TODOs)</text>
+      <text class="f" x="936" y="472">run.json (usage, cost)</text>
+      <text class="f" x="936" y="490">compare (optional, after)</text>
+    </svg>
+  </div>
+  <p class="note">Dashed blue lines show the agents reading the skill store through tools. Existing workflow YAMLs never enter either phase. They are only used by <code>compare</code>, after generation.</p>
+</section>
 
-          <path class="arrow" d="M169 372 H189" marker-end="url(#ah)"/>
-          <path class="arrow" d="M321 372 H341" marker-end="url(#ah)"/>
-          <path class="arrow" d="M473 372 H493" marker-end="url(#ah)"/>
-          <path class="arrow" d="M625 372 H645" marker-end="url(#ah)"/>
-          <path class="arrow" d="M777 372 H797" marker-end="url(#ah)"/>
-          <path class="arrow" d="M929 372 H949" marker-end="url(#ah)"/>
-        </g>
+<section>
+  <h2>Stage by stage</h2>
+  <div class="stages">
+    <div class="phase">Compile</div>
 
-        <!-- PROCEDURE TREE STORE -->
-        <rect class="box store" x="39" y="178" width="401" height="84" rx="6"/>
-        <text class="t" x="55" y="202">Procedure skill tree  (&lt;name&gt;_procedure/)</text>
-        <text class="f" x="55" y="222">sections in document order · LLM summaries</text>
-        <text class="f" x="55" y="238">related sections · likely tools &amp; data</text>
-        <text class="f" x="55" y="254">documents.json · procedure_links.json</text>
-        <path class="arrow" d="M80 334 V264" marker-end="url(#ah)"/>
-        <path class="arrow data" d="M468 220 H442" marker-end="url(#ahd)"/>
-        <path class="arrow data" d="M400 262 V296 H548 V334" marker-end="url(#ahd)"/>
-        <path class="arrow data" d="M150 262 V282 H256 V334" marker-end="url(#ahd)"/>
-        <text class="note" x="262" y="300">outline</text>
-
-        <rect class="box io" x="39" y="446" width="130" height="56" rx="6"/>
-        <text class="t" x="51" y="468">Procedure</text>
-        <text class="f" x="51" y="488">md·txt·docx·pdf</text>
-        <path class="arrow" d="M104 446 V410" marker-end="url(#ah)"/>
-
-        <!-- catalog reads -->
-        <path class="arrow data" d="M560 262 V334" marker-end="url(#ahd)"/>
-        <text class="note" x="568" y="318">browse + class syntax</text>
-        <path class="arrow data" d="M864 262 V334" marker-end="url(#ahd)"/>
-        <text class="note" x="872" y="318">agent syntax</text>
-
-        <!-- outputs -->
-        <rect class="box io" x="647" y="446" width="282" height="56" rx="6"/>
-        <text class="t" x="659" y="468">generated/&lt;name&gt;/*.yaml</text>
-        <text class="f" x="659" y="488">&lt;name&gt;_steps.json · &lt;name&gt;_report.json</text>
-        <path class="arrow" d="M712 408 V444" marker-end="url(#ah)"/>
-
-        <rect class="box io" x="951" y="446" width="130" height="56" rx="6"/>
-        <text class="t" x="963" y="468">Existing YAMLs</text>
-        <text class="f" x="963" y="488">--compare-with</text>
-        <path class="arrow late" d="M1016 446 V410" marker-end="url(#ahl)"/>
-
-        <!-- LLM GATEWAY -->
-        <rect class="box gate" x="39" y="548" width="1046" height="64" rx="6"/>
-        <text class="t" x="55" y="572">LLM gateway: every LLM / EMB box calls through here</text>
-        <text class="f" x="55" y="592">llm.py LLMClient (retries, JSON checks, usage)  →  providers/tachyon_provider.py chat() / embed()  →  Tachyon</text>
-        <text class="f" x="760" y="572">models set per role in gen_config.yaml</text>
-      </svg>
-    </div>
-  </section>
-
-  <section aria-labelledby="e2e">
-    <h2 id="e2e">End to end, step by step</h2>
-    <p>This follows one example through every stage: the PMI deletion denial (DDN) review from the test fixtures. Each stage lists what it reads, what it does, what's checked, and what it hands to the next stage, with a real sample of that output. Loan data never appears: the procedure and catalog hold only reference material.</p>
-    <nav class="toc" aria-label="Stages">
-      <a href="#s0">0 Setup</a>
-      <a href="#c1">C1 Collect</a><a href="#c2">C2 Cards</a><a href="#c3">C3 Embed</a><a href="#c4">C4 Partition</a><a href="#c5">C5 Describe</a>
-      <a href="#g0">G0 Guards</a><a href="#g1">G1 Procedure tree</a><a href="#g2">G2 Extract</a><a href="#g3">G3 Plan</a><a href="#g4">G4 Ground</a><a href="#g5">G5 Emit</a><a href="#g6">G6 Validate</a><a href="#g7">G7 Compare</a>
-    </nav>
-
-    <article class="stage" id="s0">
-      <div class="stage-head"><span class="sid">0</span><h3>Setup</h3><span class="file">gen_config.yaml · providers/tachyon_provider.py</span></div>
-      <div class="stage-body">
-        <p>Fill in the three <code>TODO(tachyon)</code> blocks: create the client, make a chat call, and optionally an embeddings call. Then set a Tachyon model for each role. Nothing else in the code refers to Tachyon.</p>
-<pre>models:
-  extract: &lt;model&gt;          # reads the procedure
-  ground: &lt;model&gt;           # writes SQL / transforms / prompts
-  navigate: &lt;model&gt;         # browses the catalog, many short turns
-  catalog_summary: &lt;model&gt;  # folder summaries
-  catalog_cards: &lt;model&gt;    # one call per catalog doc (cheap model is fine)
-  llm_agent: &lt;model&gt;        # written into `model:` of generated LlmAgents
-embedding: { provider: local, model: Qwen/Qwen3-Embedding-0.6B }
-generation: { prefix: pmi_ddn, pipeline_inputs: [loan_number],
-              default_connection_env: ECRM_DB_CONN }</pre>
+    <div class="stage"><div class="n">1</div><div class="body">
+      <div class="head"><h3>Split into documents</h3><span class="chip det">code</span></div>
+      <p>The code cuts each input into document-sized pieces without knowing its schema, so any procedure, tools or metadata file works without code changes.</p>
+      <div class="io">
+        <div><b>Markdown</b>One document per heading, going down to the deepest level that stays under the size budget (about 1,500 tokens). Tables stay whole. Each document keeps its heading path and line range, for example <code>procedure/attribute-instructions/testing-information/determine-if-the-loan-is-a-cramdown</code> for lines 599–619.</div>
+        <div><b>YAML / JSON</b>One document per top-level key. A node over the budget is split into its children. List items named by <code>name</code>, <code>tool_name</code> or <code>id</code> use that name in the path, for example <code>tools/tools/escrow_cya_icmp_search_documents</code>. The raw YAML text of the node is kept.</div>
       </div>
-    </article>
+      <p class="note">Each document carries its family (procedure, tools, metadata or agent-syntax), a path, the raw text, a source reference and a content hash. AMBC1 plus its three companion files come to roughly 100 documents.</p>
+    </div></div>
 
-    <h3 class="phase">Phase 1 · Compile the catalog <span class="mono muted">python -m o2a_gen compile-catalog --src catalog_src --out catalog_build</span></h3>
+    <div class="stage"><div class="n">2</div><div class="body">
+      <div class="head"><h3>Card every document</h3><span class="chip llm">Opus 5.5 · Batch API · effort low</span></div>
+      <p>Opus reads each document once and fills a card: a JSON object whose shape is set by structured outputs. The card makes a document findable, and it is where the model, not code, works out what a tool returns or which fields a procedure decision needs.</p>
+      <pre><span class="k">title</span>       short name a person would search for
+<span class="k">summary</span>     2–4 sentences: what it is and when you would open it
+<span class="k">names</span>       exact identifiers it defines or uses (tools, tables, fields, keys, classes)
+<span class="k">provides</span>    data or capability it supplies            <span class="c"># tools / metadata</span>
+<span class="k">needs</span>       inputs it requires
+<span class="k">decisions</span>   checks the reviewer makes, in order         <span class="c"># procedure</span>
+<span class="k">outcomes</span>    results a decision can lead to (pass, fail, manual review…)</pre>
+      <div class="io">
+        <div><b>How it is called</b>One Batch API request per document, keyed by <code>custom_id</code> = document id. The system prompt and card schema are identical in every request and cached. Batches cost 50% less, and most finish within an hour (the limit is 24 hours). <code>--sync</code> sends normal calls instead for quick iterations on small inputs.</div>
+        <div><b>Cache</b>Cards are saved in <code>cards.json</code> under the document's content hash. A rebuild only cards new or changed documents.</div>
+      </div>
+    </div></div>
 
-    <article class="stage" id="c1">
-      <div class="stage-head"><span class="sid">C1</span><h3>Collect &amp; split</h3><span class="file">catalog.py</span><span class="chip det">code</span></div>
-      <div class="stage-body">
-        <dl class="io">
-          <dt>Reads</dt><dd><code>catalog_src/</code>: <code>schema/</code> (required), <code>metadata/</code>, <code>tools/</code>, <code>reference/</code>. An <code>agents/</code> folder is ignored with a warning.</dd>
-          <dt>Does</dt><dd>Turns every source into one document per thing:
-            <ul>
-              <li><strong>Agent syntax:</strong> split on headings that name an agent_class, so <code>## database_agent</code> becomes the document "database_agent". Other sections become "general" rules.</li>
-              <li><strong>Metadata CSV:</strong> one document per table, from its rows.</li>
-              <li><strong>SQL DDL:</strong> one document per <code>CREATE TABLE</code>.</li>
-              <li><strong>Tools:</strong> one document per tool.</li>
-              <li><strong>Reference files:</strong> split on headings if long.</li>
-            </ul>
-            Each document gets a short, stable ID: its kind letter plus a hash.</dd>
-          <dt>Checks</dt><dd>Stops if there is no agent syntax.</dd>
-          <dt>Output</dt><dd><code>catalog_index.json</code> (ID → kind, name, source file) and the document texts.</dd>
-        </dl>
-<pre>s7aaf4bc8e8716  schema     database_agent           ← agent_syntax.md "## database_agent"
-s3fcc00babc07a  schema     agent_gate               ← "## agent_gate"
-sfb1f122474d61  schema     general (agent_syntax)   ← "## Common fields" + intro
-m5520d20d37cd2  metadata   MSP_LOAN_MASTER7_CS      ← msp_dictionary.csv rows
-m29b3bf74a3f2c  metadata   connections              ← metadata/connections.md
-tb78ab9dca7345  tool       fetch_loan_document      ← tools/document_fetch.yaml
-r303a0a389a5db  reference  investor_guidelines      ← reference/investor_guidelines.md
-… 14 documents in the fixture catalog</pre>
+    <div class="stage"><div class="n">3</div><div class="body">
+      <div class="head"><h3>Embed</h3><span class="chip emb">Nemotron-3-Embed-8B · DeepInfra</span></div>
+      <p>Each document is embedded as its card title, summary and names followed by its raw text. Documents are embedded as they are. Searches use the model's query format (<code>Instruct: … Query: …</code>), so the question "which data answers this procedure check" lands near the tools and fields that answer it.</p>
+      <div class="io">
+        <div><b>Settings</b>DeepInfra's OpenAI-compatible <code>/embeddings</code> endpoint, 32 texts per call, first 1024 of 4096 dimensions kept, each vector scaled to unit length. The key comes from <code>DEEPINFRA_API_KEY</code>.</div>
+        <div><b>Cache</b><code>vectors.npy</code> is stored with a signature (model, dimensions, template). If the signature changes, every document is re-embedded. Otherwise only changed documents are.</div>
       </div>
-    </article>
+    </div></div>
 
-    <article class="stage" id="c2">
-      <div class="stage-head"><span class="sid">C2</span><h3>Document cards</h3><span class="file">skilltree.make_cards</span><span class="chip llm">LLM</span></div>
-      <div class="stage-body">
-        <dl class="io">
-          <dt>Does</dt><dd>One call per document, using the <code>catalog_cards</code> model, returns a title, a one-line summary and up to 8 keywords (exact table, column, tool and field names).</dd>
-          <dt>Checks</dt><dd>The reply must be JSON with a title; otherwise it retries. If it still fails, it falls back to the document name.</dd>
-          <dt>Cache</dt><dd><code>cards.json</code> stores a hash of each document's content. On a rebuild, only new or changed documents are sent to the model.</dd>
-        </dl>
-<pre>{"title": "MSP_LOAN_MASTER7_CS",
- "one_line": "Loan master table with investor class and ICMP letter date.",
- "keywords": ["MSP_LOAN_MASTER7_CS","LN_NO","INV_CLASS_CODE","LETTER_EFFECTIVE_DATE"]}</pre>
+    <div class="stage"><div class="n">4</div><div class="body">
+      <div class="head"><h3>Organise and link</h3><span class="chip det">code</span><span class="chip emb">cosine</span><span class="chip llm">Opus folder pages</span></div>
+      <div class="io">
+        <div><b>Folders</b><code>procedure/</code> and <code>agent-syntax/</code> follow their headings, because order matters there: procedure steps run in sequence and syntax sections are one per class. <code>tools/</code> and <code>metadata/</code> are grouped by cosine k-means (up to 8 sub-folders, up to 12 documents per folder). An input under 12 documents stays as one folder.</div>
+        <div><b>Folder pages</b>Opus writes each folder's <code>SKILL.md</code> from the cards below it, bottom-up, with one batch per tree level. The page says what the folder holds and when to open it. <code>INDEX.md</code> lists the documents with their card titles.</div>
+        <div><b>Cross-links</b>Each procedure section gets the top 5 tools and metadata documents by query similarity, plus any whose card names appear in the section. These are written onto the page as <i>Likely sources</i>. Tool and metadata pages get the reverse <i>Used by procedure</i> links. Every document also gets its 3 nearest neighbours in the same family.</div>
+        <div><b>Name index</b><code>names.json</code> maps every exact identifier on the cards to its documents, for example <code>escrow_cya_batch_id</code> → the tool that produces it and the hint that gates on it. Lookups need no model call.</div>
       </div>
-    </article>
+      <p class="note">Links are hints for the agents. An agent confirms a link by reading the document it points to.</p>
+    </div></div>
 
-    <article class="stage" id="c3">
-      <div class="stage-head"><span class="sid">C3</span><h3>Embed</h3><span class="file">skilltree.embed_texts</span><span class="chip emb">EMB</span></div>
-      <div class="stage-body">
-        <dl class="io">
-          <dt>Text</dt><dd><code>"{title}. {one_line} {keywords}\n{first 2000 chars}"</code>. The card goes first so documents group by subject, not by DDL formatting.</dd>
-          <dt>Model</dt><dd><code>local</code>: sentence-transformers on this machine, in batches of 32; nothing leaves the machine. <code>llm</code>: Tachyon <code>embed()</code>.</dd>
-          <dt>Output</dt><dd>One vector per document, scaled to length 1, so a dot product equals cosine similarity (1 means the same meaning, 0 means unrelated). Used in C4 to form folders, and <strong>saved</strong> (<code>vectors.npy</code>, with the model name) so that G1 can match procedure sections to the most similar tools and data. If the embedding model changes, the saved vectors are ignored and the catalog has to be rebuilt.</dd>
-        </dl>
-      </div>
-    </article>
+    <div class="phase">Generate</div>
 
-    <article class="stage" id="c4">
-      <div class="stage-head"><span class="sid">C4</span><h3>Partition into folders</h3><span class="file">skilltree.split · kmeans</span><span class="chip det">code</span></div>
-      <div class="stage-body">
-        <ol class="steps">
-          <li><strong>By kind first:</strong> <code>agent-syntax/</code>, <code>data-metadata/</code>, <code>tools/</code>, <code>reference-docs/</code>. A table can never share a folder with a tool.</li>
-          <li><strong>Recursive split</strong> within each kind: if a group has more than <code>leaf_max</code> (12) documents, use k = clamp(⌈n/12⌉, 2, <code>branching</code> 8) and cluster.</li>
-          <li><strong>Cosine k-means:</strong>
-            <ul>
-              <li>Seed the starting points with k-means++, so they begin far apart.</li>
-              <li>Assign each document to the centre it's most similar to (<code>argmax X·Cᵀ</code>).</li>
-              <li>Move each centre to the average of its documents, rescaled to length 1.</li>
-              <li>Repeat until nothing moves, or 50 rounds.</li>
-            </ul>
-          </li>
-          <li><strong>Fold small groups</strong> (fewer than <code>min_group</code>) into the most similar group, then recurse, up to <code>max_depth</code> 4.</li>
-          <li><strong>Fixed seed:</strong> the same documents and model always produce the same folders.</li>
-        </ol>
-        <p class="muted">For example, 60 tables become 5 folders of about 12. 300 tables become 8 folders, each split again into about 3.</p>
+    <div class="stage"><div class="n">5</div><div class="body">
+      <div class="head"><h3>Plan the workflow</h3><span class="chip llm">Opus 5.5 · effort high</span></div>
+      <p>The Planner reads the procedure tree section by section, follows each section's likely sources, and reads whatever the metadata says about pipeline shape. For escrow_cya, that includes <code>pipeline_architecture</code> and <code>agent_operation_hints</code>. The model finds these pages because they are in the store. No code looks for them. It chooses each agent's class from the agent-syntax family: deterministic classes for lookups, transforms and routing, and <code>LlmAgent</code> only where the syntax and procedure call for judgement.</p>
+      <div class="io">
+        <div><b>Output</b><code>submit_plan</code> takes a strict-schema tool input containing the workflow name and prefix, the pipeline inputs, and the agents. Each agent has a name, class, purpose, procedure refs, source documents, input keys, output key, and children or routes. The plan also contains the session-key table (writer and readers of each key), manual-review routes, and gaps: data a decision needs that no tool or metadata provides.</div>
+        <div><b>Checked by code</b>The plan must match the schema, and every class name must be one the syntax cards list. A mismatch goes back to the Planner as a tool error. Nothing else is checked by code.</div>
       </div>
-    </article>
+    </div></div>
 
-    <article class="stage" id="c5">
-      <div class="stage-head"><span class="sid">C5</span><h3>Describe &amp; write the tree</h3><span class="file">skilltree.describe · write_tree</span><span class="chip llm">LLM</span></div>
-      <div class="stage-body">
-        <dl class="io">
-          <dt>Does</dt><dd>Works bottom-up, one call per folder, using the <code>catalog_summary</code> model. Leaf folders are described from their documents' cards; parent folders from their children's summaries. Top folders keep their fixed purpose line first.</dd>
-          <dt>Name index</dt><dd>Built without the model: every document name and keyword → the folders and documents containing it.</dd>
-          <dt>Output</dt><dd><code>catalog_build/</code>: <code>.claude/skills/…/SKILL.md|INDEX.md</code>, <code>documents.json</code>, <code>entity_index.json</code>, <code>catalog_index.json</code>, <code>cards.json</code>, <code>build_meta.json</code>.</dd>
-        </dl>
-<p class="muted">Example leaf folder. The folder name and summary are written by the model, so yours will differ.</p>
-<pre>--- data-metadata/msp-loan-tables/INDEX.md
-name: msp-loan-tables
-description: >
-  MSP loan master and PMI history tables, with the ECRM connection they use.
-## Documents (2)
-- `m5520d20d37cd2` - MSP_LOAN_MASTER7_CS - Loan master table … - [LN_NO, INV_CLASS_CODE, …]
-- `m29b3bf74a3f2c` - connections - MSP tables are read through ECRM_DB_CONN …</pre>
+    <div class="stage"><div class="n">6</div><div class="body">
+      <div class="head"><h3>Write each agent</h3><span class="chip llm">Opus 5.5 · effort medium · N in parallel</span></div>
+      <p>Each planned agent gets one Writer, and up to 8 run at a time. A Writer reads the syntax page for its class, then fetches its source documents and the procedure sections it cites. It writes the YAML with <code>write_yaml</code>, which parses the text and checks that the name matches the file. Any error goes back to the Writer.</p>
+      <div class="io">
+        <div><b>Where values come from</b>Values are copied from tools, metadata, syntax or procedure: URLs, auth blocks, SQL, field names and <code>${ENV:VAR}</code> names. Each block of fields gets a provenance comment, such as <code># from tools/escrow_cya_icmp_search_documents</code> or <code># procedure lines 599–619</code>.</div>
+        <div><b>When a value is missing</b>The field stays empty with <code># TODO: what is missing (looked in: …)</code>, and <code>note_placeholder</code> records it. Writers never invent a URL, table, column or connection.</div>
       </div>
-    </article>
+    </div></div>
 
-    <h3 class="phase">Phase 2 · Generate <span class="mono muted">python -m o2a_gen generate --procedure pmi_ddn.md --catalog catalog_build --out generated/pmi_ddn [--compare-with pipelines/pmi_ddn]</span></h3>
+    <div class="stage"><div class="n">7</div><div class="body">
+      <div class="head"><h3>Review and fix</h3><span class="chip llm">Opus 5.5 · effort high · fresh context</span></div>
+      <p>The Reviewer never sees the Writers' reasoning, so it judges only the files. It reads the plan, every YAML, the syntax checklist (§14) and pitfalls (§15), and the procedure. It then checks six things:</p>
+      <ul>
+        <li>Each procedure decision is covered.</li>
+        <li>Every input key is written earlier or is a pipeline input.</li>
+        <li>Classes and fields match the syntax.</li>
+        <li>Router operators match the syntax.</li>
+        <li>Values trace to a source document.</li>
+        <li>Each placeholder is really missing. The Reviewer searches for it once more.</li>
+      </ul>
+      <div class="io">
+        <div><b>Findings</b><code>submit_review</code> returns a list of findings. Each has the agent, the severity (blocking or minor), the problem, the evidence (document id or line) and the fix.</div>
+        <div><b>Loop</b>Each blocking finding goes to a new Writer call for that agent, which gets its current YAML and the finding. This repeats for at most 2 rounds (configurable). Findings still open after that are listed in <code>review.md</code>.</div>
+      </div>
+    </div></div>
 
-    <article class="stage" id="g0">
-      <div class="stage-head"><span class="sid">G0</span><h3>Guards before anything runs</h3><span class="file">generate.py</span><span class="chip det">code</span></div>
-      <div class="stage-body">
-        <p>It refuses to run if:</p>
-        <ul>
-          <li>the catalog contains agent documents;</li>
-          <li>the catalog was built from files inside the <code>--compare-with</code> folder;</li>
-          <li><code>--compare-with</code> is the output folder;</li>
-          <li>the output folder already has YAMLs (unless <code>--overwrite</code>).</li>
-        </ul>
-        <p>Existing YAMLs are not opened until G7.</p>
-      </div>
-    </article>
+    <div class="stage"><div class="n">8</div><div class="body">
+      <div class="head"><h3>Outputs</h3><span class="chip det">code</span></div>
+      <pre>out/escrow_cya/
+  agents/*.yaml          <span class="c"># one file per agent, name == file name</span>
+  plan.json, plan.md     <span class="c"># agents, classes, session keys, manual-review routes, gaps</span>
+  review.md              <span class="c"># findings, what was fixed, what is still open</span>
+  placeholders.md        <span class="c"># every empty field: agent, field, what is missing, where it looked</span>
+  run.json               <span class="c"># input hashes, model ids, tokens and cost per stage</span></pre>
+      <p class="note"><code>o2a_gen compare --gold existing/ --gen out/escrow_cya/agents</code> scores the output against hand-written YAMLs if you have them. It runs only after generation.</p>
+    </div></div>
+  </div>
+</section>
 
-    <article class="stage" id="g1">
-      <div class="stage-head"><span class="sid">G1</span><h3>Compile the procedure into a skill tree</h3><span class="file">proctree.py</span><span class="chip llm">LLM</span> <span class="chip emb">EMB</span></div>
-      <div class="stage-body">
-        <p>The procedure is the corpus in the Corpus2Skill sense. Its steps are what the pipeline must answer, and the catalog holds what the answers are built from. This stage gives it the same treatment as the catalog: split, summarised and embedded. One difference: its folders follow the procedure's own headings, <strong>in document order</strong>, because the order of steps is the workflow and topic clustering would scramble it.</p>
-        <dl class="io">
-          <dt>Split</dt><dd>Headings form the tree: <code>## 1. Pre-process</code> becomes folder <code>procedure/02-1-pre-process/</code>, and the number prefix keeps the order. Each section's own text becomes a document (<code>p</code> + hash) with its line range; long sections are split on blank lines. Text before the first heading becomes a "Preamble" section.</dd>
-          <dt>Summarise</dt><dd>One call per section, bottom-up, using the <code>catalog_summary</code> model. A parent's summary is built from its own text plus its sub-sections' summaries.</dd>
-          <dt>Embed</dt><dd>Each section document (title + summary + text), with the same embedding model as the catalog.</dd>
-          <dt>Link</dt><dd>
-            <ul>
-              <li><strong>Related sections:</strong> the 3 most similar other sections of the procedure. This is how a step finds definitions, appendices or rules stated elsewhere.</li>
-              <li><strong>Likely tools &amp; data:</strong> the 5 most similar catalog documents (metadata, tools, reference; agent syntax excluded), scored against the catalog's saved vectors.</li>
-            </ul></dd>
-          <dt>Output</dt><dd><code>generated/pmi_ddn_procedure/</code>: <code>.claude/skills/procedure/…</code>, <code>documents.json</code>, <code>catalog_index.json</code>, <code>procedure_links.json</code>. Set <code>generation.compile_procedure: false</code> to skip this stage.</dd>
-        </dl>
-<pre>--- procedure/02-1-pre-process/INDEX.md
-# 1. Pre-process
-Lines 7-10.
-## Text
-- `p419a06197ba3e` - lines 8-10
-## Related procedure sections
-- `pa8a4cb0e4866b` procedure/05-4-post-process (0.52)
-- `p91f74311b91b9` procedure/03-2-icmp-check (0.47)
-- `p436cd139b211c` procedure/01-preamble (0.37)
-## Likely tools &amp; data
-- `r303a0a389a5db` [reference] investor_guidelines (0.59)
-- `m5520d20d37cd2` [metadata] MSP_LOAN_MASTER7_CS (0.53)
-- `tb78ab9dca7345` [tool] fetch_loan_document (0.40)
-- `m0e164e8414594` [metadata] MSP_PMI_HISTORY (0.39)
-- `m29b3bf74a3f2c` [metadata] connections (0.22)</pre>
-        <p class="muted">These are real links from the test run. Scores come from the test's word-count embedder; a real embedding model will rank differently. Similarity links are suggestions: G4 still opens the documents before using them, and every answer is checked.</p>
-      </div>
-    </article>
+<section>
+  <h2>The skill store on disk</h2>
+  <p>This is the Corpus2Skill layout, with one top folder for each input.</p>
+  <pre>build/escrow_cya/skills/
+  SKILL.md                                  <span class="c"># root: the four families and what each is for</span>
+  procedure/
+    SKILL.md  INDEX.md
+    attribute-instructions/testing-information/
+      determine-if-the-loan-is-a-cramdown/SKILL.md    <span class="c"># card, Likely sources, related</span>
+  tools/        SKILL.md  INDEX.md  &lt;clusters&gt;/…
+  metadata/     SKILL.md  INDEX.md  &lt;clusters&gt;/…
+  agent-syntax/ SKILL.md  INDEX.md  rest-api-agent-syntax/SKILL.md …
+  documents.json     <span class="c"># id → raw text, family, source ref, hash</span>
+  cards.json         <span class="c"># hash → card</span>
+  links.json         <span class="c"># likely sources, used-by, related</span>
+  names.json         <span class="c"># identifier → document ids</span>
+  vectors.npy  vectors.json
+  manifest.json      <span class="c"># input hashes, model ids, embedding signature</span></pre>
+</section>
 
-    <article class="stage" id="g2">
-      <div class="stage-head"><span class="sid">G2</span><h3>Extract steps from the procedure</h3><span class="file">procedure.py</span><span class="chip llm">LLM</span></div>
-      <div class="stage-body">
-        <dl class="io">
-          <dt>Reads</dt><dd>The <strong>whole</strong> procedure, sent to the <code>extract</code> model with every line numbered so each step can cite its source, plus the section outline and summaries from G1. The whole text is read here so no step can be missed.</dd>
-          <dt>Does</dt><dd>Returns phases → steps, each with:
-            <ul>
-              <li>a <strong>kind</strong>: lookup, compute, review, decision or approval;</li>
-              <li>what it <strong>produces</strong> and which earlier steps it <strong>uses</strong>;</li>
-              <li>for decisions, the step it <strong>depends on</strong> and its <strong>branches</strong>.</li>
-            </ul>
-            Two rules: a complex condition gets its own compute step that produces a flag, and branches that produce the same outcome use the same wording.</dd>
-          <dt>Checks</dt><dd>Step IDs are unique; <code>uses</code> points only to earlier steps or inputs; each decision has at least two branches, none empty; every cited line number exists in the procedure. A failure is sent back with the error, for up to 3 tries.</dd>
-          <dt>Output</dt><dd><code>generated/pmi_ddn_steps.json</code></dd>
-        </dl>
-<pre>P1 Pre-process
-  S1 lookup   Fetch MSP loan data        lines 10     uses [loan_number]  → "msp loan data"
-  S2 compute  ICMP required flag         lines 11     uses [S1]           → "icmp required flag"
-P2 ICMP check
-  S3 decision ICMP decision              lines 14-16  depends_on S2
-     ├ "icmp process"         when flag is Y:  S4 review   → "icmp review"
-     └ "no icmp path handler" when flag is N:  S5 compute  → "icmp review"
-P3 Approval     S6 approval  Approval gate          → "approval status"
-P4 Post-process S7 review    Verdict synthesizer  uses [S1, S4] → "verdict"</pre>
-      </div>
-    </article>
+<section>
+  <h2>Tools the agents use</h2>
+  <p>These are client tools on the Messages API. The code runs them against the skill store and the output folder.</p>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Tool</th><th>Returns</th><th>Used by</th></tr></thead>
+    <tbody>
+      <tr><td><code>ls(path)</code></td><td>Sub-folders and documents under a path, with card titles</td><td>all</td></tr>
+      <tr><td><code>read(path)</code></td><td>A folder's <code>SKILL.md</code> or <code>INDEX.md</code></td><td>all</td></tr>
+      <tr><td><code>find(query, family?)</code></td><td>Exact matches from the name index first, then the nearest documents by Nemotron query embedding</td><td>all</td></tr>
+      <tr><td><code>get_document(id)</code></td><td>Raw text with its source reference (file and lines, or YAML path)</td><td>all</td></tr>
+      <tr><td><code>write_yaml(name, text)</code></td><td>OK, or the YAML parse error or name/file mismatch</td><td>Writers</td></tr>
+      <tr><td><code>read_yaml(name)</code>, <code>list_yaml()</code></td><td>Written agents</td><td>Writers, Reviewer</td></tr>
+      <tr><td><code>note_placeholder(agent, field, missing, looked_in)</code></td><td>OK; the entry is added to placeholders.md</td><td>Writers</td></tr>
+      <tr><td><code>submit_plan</code>, <code>submit_review</code></td><td>Strict-schema final answers that end the agent's loop</td><td>Planner, Reviewer</td></tr>
+    </tbody>
+  </table></div>
+</section>
 
-    <article class="stage" id="g3">
-      <div class="stage-head"><span class="sid">G3</span><h3>Plan the agent tree</h3><span class="file">plan.py</span><span class="chip det">code</span></div>
-      <div class="stage-body">
-        <dl class="io">
-          <dt>Class</dt><dd>lookup → <code>database_agent</code> · compute → <code>slv_transformation_agent</code> · review → <code>LlmAgent</code> · decision → <code>decision_router_agent</code> · approval → <code>agent_gate</code></dd>
-          <dt>Structure</dt><dd>
-            <ul>
-              <li>The whole procedure becomes a <code>resumable_orchestrator</code>.</li>
-              <li>Each phase becomes a <code>SequentialAgent</code>, unless it's only a router or a gate.</li>
-              <li>A branch with several steps becomes a <code>SequentialAgent</code>.</li>
-            </ul></dd>
-          <dt>Names &amp; keys</dt><dd>
-            <ul>
-              <li>Names are <code>prefix_</code> + the step title, in snake_case; output keys are <code>prefix_</code> + what the step produces. Both are de-duplicated.</li>
-              <li><code>uses</code> becomes the <strong>required keys</strong>.</li>
-              <li>Each agent records the <strong>available keys</strong> at its point in the flow.</li>
-              <li>Mutually exclusive branches that produce the same thing share one key.</li>
-            </ul></dd>
-        </dl>
-<pre>pmi_ddn_pipeline                       resumable_orchestrator   → pmi_ddn_final_output
-├─ pmi_ddn_pre_process                 SequentialAgent
-│   ├─ pmi_ddn_fetch_msp_loan_data     database_agent           → pmi_ddn_msp_loan_data
-│   └─ pmi_ddn_icmp_required_flag      slv_transformation_agent → pmi_ddn_icmp_required_flag
-├─ pmi_ddn_icmp_decision_router        decision_router_agent
-│   ├─ pmi_ddn_icmp_process            LlmAgent                 → pmi_ddn_icmp_review
-│   └─ pmi_ddn_no_icmp_path_handler    slv_transformation_agent → pmi_ddn_icmp_review
-├─ pmi_ddn_approval_gate               agent_gate               → pmi_ddn_approval_status
-└─ pmi_ddn_post_process                SequentialAgent
-    └─ pmi_ddn_verdict_synthesizer     LlmAgent                 → pmi_ddn_verdict
+<section>
+  <h2>Prompt caching</h2>
+  <p>Every Writer call starts with the same prefix, cached once and read by the rest. Cached input costs $0.20 per million tokens instead of $4. The first Writer runs alone until its first response has written the cache. The others then start and read it. The conversation history is cached too, so each new turn only pays full price for what it adds.</p>
+  <div class="cachewrap"><div class="cachebar">
+    <div class="cached" style="flex:2">tool definitions<small>≈2k tok</small></div>
+    <div class="cached" style="flex:3">role instructions<small>≈3k</small></div>
+    <div class="cached" style="flex:4">full agent_syntax.md<small>≈3.5k</small></div>
+    <div class="cached" style="flex:2">skill root page<small>≈1.5k</small></div>
+    <div class="cached" style="flex:3">plan.json<small>≈3k</small></div>
+    <div class="bp" title="cache breakpoint"></div>
+    <div class="fresh" style="flex:1.5">this agent's assignment<small>≈0.5k</small></div>
+    <div class="fresh" style="flex:5">tool calls and results, growing<small>history cached per turn</small></div>
+  </div></div>
+  <p class="note">The blue segments are cached and the white ones are sent fresh; the dark bar marks the cache breakpoint. The syntax is small enough to include whole, so every Writer sees all twelve classes and the §14 checklist without asking for them. The Planner and Reviewer share the same first four segments. Card requests have their own cached prefix, the card instructions plus the schema.</p>
+</section>
 
-verdict_synthesizer: available = [loan_number, pmi_ddn_msp_loan_data, pmi_ddn_icmp_required_flag,
-                                  pmi_ddn_icmp_review, pmi_ddn_approval_status]
-                     required  = [pmi_ddn_msp_loan_data, pmi_ddn_icmp_review]</pre>
-      </div>
-    </article>
+<section>
+  <h2>Worked example: one AMBC1 check</h2>
+  <p>This traces the section <i>Login to ICMP System</i> through the pipeline, using the real tools and metadata files.</p>
+  <div class="trace">
+    <div class="tstep"><div>1 split</div><div>Lines 422–437 become one procedure document, and <code>tools[0]</code> (<code>escrow_cya_icmp_search_documents</code>) becomes one tools document.</div></div>
+    <div class="tstep"><div>2 card</div><div>The procedure card has the decision "is an analysis completed before the end of the computation year imaged in ICMP (Escrow Account Disclosure)". The tool card says it provides an ICMP document search for DOC_TYPE_CD 1088, needs a loan number, and needs its body built by a transformation agent.</div></div>
+    <div class="tstep"><div>3–4 embed, link</div><div>Query similarity and the shared name <i>ICMP</i> put the search tool, the <code>icmp_outputs</code> data-dictionary fields and the <code>rest_api_agent</code> syntax page on the section's Likely sources.</div></div>
+    <div class="tstep"><div>5 plan</div><div>The Planner reads the section, the tool and the <code>x-pipeline-architecture</code> stages. It plans <code>escrow_cya_icmp_body_generator</code> (transformation_agent), then <code>escrow_cya_icmp_search_documents</code> (rest_api_agent), then a not-found flag and router. The syntax section "Critical runtime requirement" and the tool description both say the payload must come from a transformation agent.</div></div>
+    <div class="tstep"><div>6 write</div><div>The Writer copies <code>url: ${ENV:ICMP_SEARCH_DOCUMENTS_URL}</code>, <code>method: POST</code>, the WF- headers and the <code>bearer_dynamic</code> auth block from the tool, adding <code># from tools/escrow_cya_icmp_search_documents</code>. If a field the syntax requires isn't in the tool, the Writer leaves it empty with a TODO.</div></div>
+    <div class="tstep"><div>7 review</div><div>The Reviewer checks four things: the body generator's output key is this agent's input, the router uses operators from §9, the "not found" branch goes where the procedure says (additional research), and any decision that needs a field marked <code>available: false</code> routes to manual review (NEEDS_HUMAN).</div></div>
+  </div>
+</section>
 
-    <article class="stage" id="g4">
-      <div class="stage-head"><span class="sid">G4</span><h3>Ground each agent</h3><span class="file">navigator.py · ground.py</span><span class="chip llm">LLM</span></div>
-      <div class="stage-body">
-        <p>Runs for every agent that came from a procedure step, several at once (<code>--workers</code>). Container agents (orchestrator, sequences) need no model call.</p>
-        <h4>a · Browse the catalog <span class="mono muted">navigate model, up to 12 turns</span></h4>
-        <p>The step's cited line is mapped to its procedure section, and this context is given both to the navigator and to the writer:</p>
-<pre>This step is in procedure section `procedure/02-1-pre-process` (lines 7-10), doc `p419a06197ba3e`.
-Related procedure sections (by similarity):
-- `pa8a4cb0e4866b` 4. Post-process (0.52)  …
-Likely tools &amp; data for this section (by similarity; verify before use):
-- `r303a0a389a5db` [reference] investor_guidelines (0.59)
-- `m5520d20d37cd2` [metadata] MSP_LOAN_MASTER7_CS (0.53)  …</pre>
-        <p>The navigator browses one combined tree: <code>procedure/</code> plus the catalog folders. The model sees the step, its section context and the top-level folders, and replies with one JSON action per turn. The code runs the action and sends back the result. Reads can't leave the catalog folder. Routers skip this, since they only need the upstream flag.</p>
-<pre>→ {"action":"find","term":"MSP_LOAN_MASTER7_CS"}
-← - doc `m5520d20d37cd2` [metadata] MSP_LOAN_MASTER7_CS
-  - entity 'MSP_LOAN_MASTER7_CS' appears in: data-metadata/msp-loan-tables
-→ {"action":"read","path":"data-metadata/msp-loan-tables/INDEX.md"}
-← (folder listing, as in C5)
-→ {"action":"get_document","doc_id":"m5520d20d37cd2"}
-← [metadata] MSP_LOAN_MASTER7_CS  Table columns: LN_NO (CHAR(10)) … LETTER_EFFECTIVE_DATE (DATE) …
-→ {"action":"done","doc_ids":["m5520d20d37cd2","m29b3bf74a3f2c"],
-   "notes":"table + ECRM connection note"}</pre>
-        <h4>b · Write the fields <span class="mono muted">ground model, 1 call + retries</span></h4>
-        <p>The prompt is assembled from:</p>
-        <ul class="compose">
-          <li><strong>The agent syntax for this class</strong>, always included and placed first, followed by the general rules.</li>
-          <li>The agent's name and class, the procedure step and its source lines.</li>
-          <li>The output key, the available keys and the required keys; for routers, each branch → target agent.</li>
-          <li>The step's procedure section context: its section, related sections and likely tools &amp; data (from G1).</li>
-          <li>The catalog documents chosen in (a), in full.</li>
-          <li>The JSON shape to return for this class.</li>
-        </ul>
-<pre>{"db_type": "teradata", "connection_env": "ECRM_DB_CONN",
- "query": "SELECT M7.LN_NO, TRIM(M7.INV_CLASS_CODE) AS inv_class_code,
-                  M7.LETTER_EFFECTIVE_DATE AS letter_effective_date
-           FROM MSP_LOAN_MASTER7_CS M7
-           WHERE M7.LN_NO = LPAD(TRIM(CAST(:loan_number AS VARCHAR(10))), 10, '0')",
- "params": ["loan_number"], "description": "Fetch MSP loan fields.", "gaps": ""}</pre>
-        <h4>c · Check, retry, derive</h4>
-        <div class="table-scroll">
-          <table class="compact">
-            <thead><tr><th>Class</th><th>Rejected when</th></tr></thead>
-            <tbody>
-              <tr><td class="mod">database_agent</td><td>SQL binds a key that isn't available; a bound key is missing from <code>params</code>; the connection isn't an env var name</td></tr>
-              <tr><td class="mod">transformation</td><td><code>transform</code> doesn't produce the output key, or uses <code>{{ keys }}</code> that aren't available</td></tr>
-              <tr><td class="mod">LlmAgent</td><td>the instruction is too short, uses <code>{keys}</code> that aren't available, or names tools that aren't in the catalog</td></tr>
-              <tr><td class="mod">router</td><td>the routes aren't exactly one per branch; a key isn't available; an operator isn't allowed; a priority isn't an integer</td></tr>
-            </tbody>
-          </table>
-        </div>
-        <p>A rejected answer goes back to the model with the exact error. In the tests, the verdict agent first references <code>{pmi_ddn_borrower_ssn}</code>, which doesn't exist. It is rejected with the list of available keys, and the second answer is used.</p>
-        <p>After acceptance, <code>input_keys</code> is <strong>derived from what the SQL, instruction or transform actually references</strong>, so an agent can never read a key it doesn't declare. A required key the agent doesn't read produces a warning. Fields the class syntax requires beyond these (e.g. a gate's <code>resume_event</code>) come back in <code>extra</code>.</p>
-      </div>
-    </article>
+<section>
+  <h2>Where the API calls happen</h2>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Stage</th><th>Service</th><th>Mode</th><th>Calls (AMBC1-size input)</th><th>Rough cost</th></tr></thead>
+    <tbody>
+      <tr><td>2 Card</td><td><span class="chip llm">Anthropic</span></td><td>Batch, cached prefix, structured output</td><td class="num">≈100</td><td class="num">under $1</td></tr>
+      <tr><td>4 Folder pages</td><td><span class="chip llm">Anthropic</span></td><td>Batch per tree level (or sync)</td><td class="num">≈10–20</td><td class="num">cents</td></tr>
+      <tr><td>3 Embed, 4 links</td><td><span class="chip emb">DeepInfra</span></td><td>/embeddings, 32 per call</td><td class="num">≈5</td><td class="num">negligible</td></tr>
+      <tr><td>5 Planner</td><td><span class="chip llm">Anthropic</span></td><td>Messages + tools, cached prefix</td><td class="num">≈20–40 turns</td><td class="num">$1–3</td></tr>
+      <tr><td>6 Writers</td><td><span class="chip llm">Anthropic</span></td><td>Messages + tools, parallel, cached</td><td class="num">≈20 agents × 5–12 turns</td><td class="num">$5–15</td></tr>
+      <tr><td>7 Reviewer + fixes</td><td><span class="chip llm">Anthropic</span></td><td>Messages + tools</td><td class="num">1 review + ≤2 fix rounds</td><td class="num">$2–6</td></tr>
+      <tr><td><code>find</code> during 5–7</td><td><span class="chip emb">DeepInfra</span></td><td>one query embedding per search</td><td class="num">tens</td><td class="num">negligible</td></tr>
+    </tbody>
+  </table></div>
+  <p class="note">The costs are estimates at list prices: $4 per million tokens in, $20 out, $0.20 cache reads, and half price on Batch. Thinking tokens count as output. <code>run.json</code> records the actual tokens and cost of each run. Batching the agent stages doesn't help, because they are multi-turn tool loops.</p>
+</section>
 
-    <article class="stage" id="g5">
-      <div class="stage-head"><span class="sid">G5</span><h3>Emit YAMLs</h3><span class="file">emit.py</span><span class="chip det">code</span></div>
-      <div class="stage-body">
-        <p>Writes one file per agent in O2A layout:</p>
-        <ul>
-          <li><code>default_db_yaml</code> as an embedded YAML string;</li>
-          <li>multi-line text as block text;</li>
-          <li><code>sub_agents</code> for containers;</li>
-          <li>per-class <code>agent_templates</code> merged in.</li>
-        </ul>
-        <p>Each file starts with a comment naming the procedure step and lines it came from.</p>
-<pre># Generated by o2a_gen from procedure_sample.md, step S1 (lines 10): Fetch MSP loan data
-# Review before use.
-name: pmi_ddn_fetch_msp_loan_data
-agent_class: database_agent
-description: Fetch MSP loan fields.
-input_keys:
-- loan_number
-output_key: pmi_ddn_msp_loan_data
-default_db_yaml: |
-  type: teradata
-  connection:
-    url: ${ENV:ECRM_DB_CONN}
-  query: |-
-    SELECT M7.LN_NO, TRIM(M7.INV_CLASS_CODE) AS inv_class_code, …
-    WHERE M7.LN_NO = LPAD(TRIM(CAST(:loan_number AS VARCHAR(10))), 10, '0')</pre>
-      </div>
-    </article>
+<section>
+  <h2>Opus 5.5 rules the harness follows</h2>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Model behaviour</th><th>What the harness does</th></tr></thead>
+    <tbody>
+      <tr><td><code>temperature</code> is rejected</td><td>Never sends it. Runs are repeatable through cached cards and a saved plan: <code>generate --from-plan</code> reruns only the Writers and Reviewer.</td></tr>
+      <tr><td>Thinking is adaptive and always on</td><td>Sets effort per role: cards and folder pages low, Writers medium, Planner and Reviewer high. Sets <code>max_tokens</code> with room for thinking: 4k for cards, 16k for Writers, 32k for the Planner and Reviewer.</td></tr>
+      <tr><td>Forced <code>tool_choice</code> returns 400</td><td>Uses <code>auto</code>. If an agent ends its turn without calling <code>submit_plan</code> or <code>submit_review</code>, the harness asks it to, at most twice, then stops that agent with an error.</td></tr>
+      <tr><td>Structured outputs are available</td><td>Cards use <code>output_config.format</code> with the card JSON schema. Final answers use strict tool schemas.</td></tr>
+      <tr><td><code>refusal</code> stop reason</td><td>Logs it. A refused card falls back to the raw text for embedding. A refused agent is listed in review.md for manual work. Batch requests get no server-side fallback, so they are handled the same way.</td></tr>
+      <tr><td>No assistant prefill</td><td>Never prefills. JSON comes from the schema, not from a leading <code>{</code>.</td></tr>
+      <tr><td>The minimum cacheable prefix is 512 tokens</td><td>Every cached prefix is well over this, at about 13k tokens for agents and about 1.5k for cards.</td></tr>
+      <tr><td>Batch results can arrive in any order</td><td>Matches results by <code>custom_id</code>. Polls until the batch ends and retries failed items in the next batch.</td></tr>
+    </tbody>
+  </table></div>
+</section>
 
-    <article class="stage" id="g6">
-      <div class="stage-head"><span class="sid">G6</span><h3>Validate</h3><span class="file">validate.py</span><span class="chip det">code</span></div>
-      <div class="stage-body">
-        <p>Reloads the written files and walks the pipeline in execution order, tracking which keys are written:</p>
-        <ul>
-          <li><strong>Sequences</strong> add each agent's key in turn.</li>
-          <li><strong>Routers</strong> fork. After a router, a key written by <em>every</em> branch counts as present; a key written by only some branches is "maybe" and produces a warning when read.</li>
-        </ul>
-        <p>It also checks:</p>
-        <ul>
-          <li>missing agents, and file/name mismatches;</li>
-          <li>undeclared references in instructions, transforms and SQL;</li>
-          <li>literal connection URLs instead of <code>${ENV:VAR}</code>;</li>
-          <li>router targets vs <code>sub_agents</code>, duplicate priorities, a missing default route;</li>
-          <li>several agents writing one key (unless they are in exclusive branches);</li>
-          <li>fields that don't appear in the class's agent syntax.</li>
-        </ul>
-<pre>WARN  router-default pmi_ddn_icmp_decision_router: no default route: if no condition matches, nothing runs
-10 agents, 0 errors, 1 warnings.</pre>
-      </div>
-    </article>
+<section>
+  <h2>Run it locally in VS Code</h2>
+  <p>The cloud sandbox blocks api.deepinfra.com, so run it on your machine. Keys are read from environment variables only. <code>.env</code> is gitignored.</p>
+  <div class="grid2">
+    <pre><span class="c"># terminal in VS Code, repo root</span>
+git checkout claude/sharp-pascal-p3v95o
+python -m venv .venv &amp;&amp; source .venv/bin/activate
+pip install -r o2a_gen/requirements.txt
 
-    <article class="stage" id="g7">
-      <div class="stage-head"><span class="sid">G7</span><h3>Compare with existing YAMLs (optional)</h3><span class="file">compare.py</span><span class="chip det">code</span></div>
-      <div class="stage-body">
-        <p>Runs only with <code>--compare-with</code>, after G6. It matches each existing agent to a generated one:</p>
-        <ol>
-          <li>by the same name;</li>
-          <li>otherwise by the same output_key and class;</li>
-          <li>otherwise by a similar name (at least 0.6).</li>
-        </ol>
-        <p>It then scores the matched pairs.</p>
-<pre>gold_agents                10       output_key_agreement       1.0
-generated_agents           10       mean_input_keys_jaccard    0.9
-matched                    10       db_table_agreement         1.0
-coverage                   1.0      missed_gold_agents         []
-class_agreement            1.0      extra_generated_agents     []</pre>
-        <p class="muted">These figures come from the offline test run on the fake model, against a PMI DDN-style reference set. Input-key overlap is 0.9 because the generated router lists its flag in <code>input_keys</code> and the hand-built one doesn't. Real results depend on the Tachyon models and your catalog.</p>
-      </div>
-    </article>
+<span class="c"># .env (never commit)</span>
+DEEPINFRA_API_KEY=…
+ANTHROPIC_API_KEY=…
 
-    <article class="stage" id="out">
-      <div class="stage-head"><span class="sid">⇥</span><h3>What you get</h3><span class="file">generated/</span></div>
-      <div class="stage-body">
-<pre>generated/pmi_ddn/*.yaml        the agents
-generated/pmi_ddn_steps.json    how the procedure was read: check this first if something looks off
-generated/pmi_ddn_report.json   coverage (step → agent), grounding (catalog docs, notes, gaps, warnings),
-                                findings, llm_usage, comparison
-exit code 1                     if validation found errors</pre>
-      </div>
-    </article>
-  </section>
+<span class="c"># planned CLI for this design</span>
+python -m o2a_gen compile \
+  --procedure inputs/AMBC1.md \
+  --tools inputs/escrow_cya_toolcalls_openapi.yaml \
+  --metadata inputs/escrow_cya_metadata.yaml \
+  --syntax inputs/agents_syntax_updated.md \
+  --out build/escrow_cya/skills
+python -m o2a_gen generate \
+  --skills build/escrow_cya/skills \
+  --out out/escrow_cya</pre>
+    <pre><span class="c">// .vscode/launch.json, to step through a run</span>
+{
+  "version": "0.2.0",
+  "configurations": [{
+    "name": "o2a_gen generate",
+    "type": "debugpy",
+    "request": "launch",
+    "module": "o2a_gen",
+    "args": ["generate",
+             "--skills", "build/escrow_cya/skills",
+             "--out", "out/escrow_cya"],
+    "envFile": "${workspaceFolder}/.env",
+    "justMyCode": true
+  }]
+}</pre>
+  </div>
+  <p class="note">No GPU is needed, because both models are called over HTTPS. A laptop is enough. <code>--sync</code> skips the Batch API so a first run finishes in minutes rather than waiting on a batch.</p>
+</section>
 
-  <section aria-labelledby="comp">
-    <h2 id="comp">Components</h2>
-    <div class="table-scroll">
-      <table>
-        <thead><tr><th>Module</th><th>Layer</th><th>Responsibility</th><th>Model</th></tr></thead>
-        <tbody>
-          <tr><td class="mod">cli.py</td><td class="layer">Entry</td><td><code>compile-catalog</code>, <code>generate</code>, <code>validate</code>, <code>compare</code>. Exit code 1 on validation errors.</td><td><span class="chip det">code</span></td></tr>
-          <tr><td class="mod">config.py</td><td class="layer">Entry</td><td>Loads <code>gen_config.yaml</code>: model per role, embedding provider, catalog options, name prefix, pipeline inputs, per-class templates.</td><td><span class="chip det">code</span></td></tr>
-          <tr><td class="mod">catalog.py</td><td class="layer">Compile</td><td>Reads <code>catalog_src/</code>. Splits the agent syntax by agent_class heading, and splits metadata into one document per table. Ignores <code>agents/</code>. Picks the engine.</td><td><span class="chip det">code</span></td></tr>
-          <tr><td class="mod">skilltree.py</td><td class="layer">Compile</td><td>Native engine: doc cards (cached by content hash), embeddings (saved for reuse), top folders by kind, cosine k-means, folder summaries written bottom-up, name index.</td><td><span class="chip llm">LLM</span> <span class="chip emb">EMB</span></td></tr>
-          <tr><td class="mod">c2s_bridge.py</td><td class="layer">Compile</td><td>Optional engine: runs the vendored Corpus2Skill with its LLM and embedding calls redirected to the gateway.</td><td><span class="chip llm">LLM</span> <span class="chip emb">EMB</span></td></tr>
-          <tr><td class="mod">proctree.py</td><td class="layer">Generate</td><td>Compiles the procedure into its own skill tree: sections in heading order, LLM summaries, embeddings, related sections, and likely tools &amp; data from the catalog's saved vectors.</td><td><span class="chip llm">LLM</span> <span class="chip emb">EMB</span></td></tr>
-          <tr><td class="mod">procedure.py</td><td class="layer">Generate</td><td>Reads .md/.txt/.docx/.pdf and extracts phases, steps, kinds, branches and source lines. Validates the result and retries on errors.</td><td><span class="chip llm">LLM</span></td></tr>
-          <tr><td class="mod">plan.py</td><td class="layer">Generate</td><td>Maps steps to agent classes; builds the orchestrator, phases, routers and gates; assigns names and session keys; records the keys available at each agent. Branches share a key when they produce the same thing.</td><td><span class="chip det">code</span></td></tr>
-          <tr><td class="mod">navigator.py</td><td class="layer">Generate</td><td>Browses the catalog with one JSON action per turn (<code>read</code> / <code>ls</code> / <code>find</code> / <code>get_document</code> / <code>done</code>). Keeps reads inside the catalog folder. Returns the agent syntax for a class. <code>CombinedCatalog</code> browses the procedure tree and the catalog as one.</td><td><span class="chip llm">LLM</span></td></tr>
-          <tr><td class="mod">ground.py</td><td class="layer">Generate</td><td>For each agent, in parallel: browse, then write the fields from the class syntax plus the documents found. Checks every answer and retries with the error.</td><td><span class="chip llm">LLM</span></td></tr>
-          <tr><td class="mod">emit.py</td><td class="layer">Generate</td><td>Writes the YAMLs in O2A layout (embedded <code>default_db_yaml</code>, block text, <code>sub_agents</code>). Adds a provenance header and merges per-class templates.</td><td><span class="chip det">code</span></td></tr>
-          <tr><td class="mod">validate.py</td><td class="layer">Verify</td><td>Walks execution order to check each key is written before it's read. Also checks references, SQL parameters, <code>${ENV:…}</code> credentials, routers, and fields outside the agent syntax.</td><td><span class="chip det">code</span></td></tr>
-          <tr><td class="mod">compare.py</td><td class="layer">Verify</td><td>Matches generated agents to existing ones by name, then output_key and class, then similar name. Scores coverage, class and key agreement, input-key overlap and tables.</td><td><span class="chip det">code</span></td></tr>
-          <tr><td class="mod">generate.py</td><td class="layer">Orchestration</td><td>Runs stages 1–7, applies the leakage guards, and writes the report and extracted steps.</td><td><span class="chip det">code</span></td></tr>
-          <tr><td class="mod">llm.py</td><td class="layer">Gateway</td><td>LLMClient interface, <code>CallableClient</code> (the Tachyon functions, with a concurrency cap), JSON extraction with retry, usage meter, and <code>FakeLLM</code> for tests.</td><td><span class="chip det">code</span></td></tr>
-          <tr><td class="mod">providers/tachyon_provider.py</td><td class="layer">Gateway</td><td>The only Tachyon-specific file: <code>chat()</code> and <code>embed()</code>. Keys come from the environment.</td><td><span class="chip det">code</span></td></tr>
-        </tbody>
-      </table>
-    </div>
-  </section>
+<section>
+  <h2>Build status</h2>
+  <p class="callout">This page describes the agreed design. The repo has the pieces marked <b>exists</b>. The ones marked <b>to build</b> are the next change, and the old step-by-step generator is retired once they work.</p>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Piece</th><th>Status</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td><code>providers/deepinfra_provider.py</code></td><td><span class="chip ok">exists</span></td><td>Nemotron embeddings, tested against a local stand-in server. It still needs a real run from your machine to confirm the model id.</td></tr>
+      <tr><td><code>skilltree.py</code></td><td><span class="chip ok">exists</span></td><td>k-means, folder pages and the vectors cache. It gets families as top folders.</td></tr>
+      <tr><td><code>proctree.py</code></td><td><span class="chip ok">exists</span></td><td>Heading split and procedure-to-source links. It will be folded into the generic splitter.</td></tr>
+      <tr><td><code>navigator.py</code> (Catalog)</td><td><span class="chip ok">exists</span></td><td>ls, read, find and get with path safety. These become the agent tools.</td></tr>
+      <tr><td><code>compare.py</code>, <code>FakeLLM</code></td><td><span class="chip ok">exists</span></td><td>Post-generation scoring, and offline tests.</td></tr>
+      <tr><td><code>providers/anthropic_provider.py</code></td><td><span class="chip llm">to build</span></td><td>Messages with tools, caching, Batch, structured outputs, effort, refusals.</td></tr>
+      <tr><td><code>split.py</code>, <code>cards.py</code></td><td><span class="chip llm">to build</span></td><td>Generic Markdown and YAML/JSON splitter, card schema, batch submit and collect.</td></tr>
+      <tr><td><code>agents/</code> loop and prompts</td><td><span class="chip llm">to build</span></td><td>Tool loop, nudges, cache warm-up, concurrency, and the Planner, Writer and Reviewer prompts.</td></tr>
+      <tr><td>CLI <code>compile</code> / <code>generate</code>, report files</td><td><span class="chip llm">to build</span></td><td>plan.md, review.md, placeholders.md, run.json.</td></tr>
+      <tr><td><code>plan.py</code>, <code>ground.py</code>, <code>emit.py</code>, class checks in <code>validate.py</code></td><td><span class="chip det">retire</span></td><td>Replaced by the Planner, Writers and Reviewer. The YAML parse and name checks move into <code>write_yaml</code>.</td></tr>
+    </tbody>
+  </table></div>
+</section>
 
-  <section aria-labelledby="data">
-    <h2 id="data">Data contracts between stages</h2>
-    <div class="grid2">
-      <div class="panel">
-        <h3>Extract → Plan: procedure steps</h3>
-        <pre>{ "name", "description", "inputs": [..],
-  "phases": [{ "id", "title", "steps": [
-    { "id": "S1", "title", "text",
-      "kind": lookup|compute|review|
-              decision|approval,
-      "source_lines": "12-15",
-      "produces", "uses": ["S0"|input],
-      "depends_on",            // decision
-      "branches": [{ "label", "when",
-                     "steps": [..] }] }]}]}</pre>
-        <p class="muted">Saved as <code>&lt;name&gt;_steps.json</code>.</p>
-      </div>
-      <div class="panel">
-        <h3>Plan → Ground: agent node</h3>
-        <pre>AgentNode(
-  name, agent_class, description,
-  step,              # source step
-  children,          # sub_agents
-  output_key,
-  required_keys,     # from `uses`
-  available_keys,    # visible here
-  branch_targets,    # routers
-  fields = {}        # filled by ground
-)</pre>
-        <p class="muted">Tree shape, names and keys are fixed before any agent is written.</p>
-      </div>
-      <div class="panel">
-        <h3>Ground prompt (per agent)</h3>
-        <ul>
-          <li>Agent-syntax section for its class, plus the general rules</li>
-          <li>Its procedure section, related sections, likely tools &amp; data</li>
-          <li>The procedure step and its source lines</li>
-          <li>Output key, available keys, required keys</li>
-          <li>Catalog documents the navigator chose</li>
-          <li>A JSON schema for that class's fields</li>
-        </ul>
-      </div>
-      <div class="panel">
-        <h3>Report</h3>
-        <ul>
-          <li><code>coverage</code>: step → agent</li>
-          <li><code>grounding</code>: which catalog docs each agent used, the gaps the model reported, warnings</li>
-          <li><code>findings</code>, <code>errors</code>, <code>warnings</code></li>
-          <li><code>llm_usage</code>: calls and tokens per model</li>
-          <li><code>comparison</code>: only with <code>--compare-with</code></li>
-        </ul>
-      </div>
-    </div>
-  </section>
+<section>
+  <h2>Open decisions</h2>
+  <ul>
+    <li>What shape the final verdict output takes, for example one key per check plus an overall result.</li>
+    <li>How manual review appears in the workflow: a NEEDS_HUMAN value, a route, or a gate.</li>
+    <li>Which model name generated <code>LlmAgent</code>s should use at runtime.</li>
+    <li>Whether hand-written escrow_cya YAMLs exist to compare against.</li>
+    <li>Answers from the metadata owner on P309, LMT type, H87, G47, G81 and T32. Until then, checks that need them route to manual review.</li>
+    <li>How to read AMBC1 lines 419–420. The current reading is "check ICMP first, else additional research".</li>
+  </ul>
+</section>
 
-  <section aria-labelledby="trust">
-    <h2 id="trust">What leaves your network</h2>
-    <div class="grid2">
-      <div class="panel leaves">
-        <h3>Sent to Tachyon</h3>
-        <ul>
-          <li><strong>Compile:</strong> catalog document text (for cards) and folder contents (for summaries)</li>
-          <li><strong>Generate:</strong> the procedure text (section summaries and step extraction); for each agent, its step and section context, the syntax section and the catalog excerpts it browsed</li>
-          <li><strong>Embeddings:</strong> only if <code>embedding.provider: llm</code></li>
-        </ul>
-      </div>
-      <div class="panel">
-        <h3>Stays local</h3>
-        <ul>
-          <li>Embeddings by default (<code>provider: local</code>, sentence-transformers)</li>
-          <li>Planning, YAML writing, validation, comparison</li>
-          <li><strong>Existing agent YAMLs</strong>: read only by <code>compare</code>, after generation, and never sent to a model</li>
-          <li>No Skills API upload and no server-side code execution</li>
-          <li>Credentials: generated YAMLs reference <code>${ENV:VAR}</code> only</li>
-        </ul>
-      </div>
-    </div>
-    <p class="muted">Keep loan and borrower data out of <code>catalog_src/</code> and the procedure. Only reference material belongs there.</p>
-  </section>
-
-  <section aria-labelledby="checks">
-    <h2 id="checks">Where it is checked</h2>
-    <div class="checks">
-      <div class="check"><div class="where">procedure.py</div><div>Step IDs are unique, <code>uses</code> points only to earlier steps or inputs, each decision has at least two branches, none empty, and every cited line exists. On failure, the model gets the error and retries (up to 3 tries).</div></div>
-      <div class="check"><div class="where">ground.py</div><div>Per class: SQL <code>:params</code> are available keys and declared; the connection is an env var name; <code>transform</code> produces the output key; instruction <code>{refs}</code> exist; tools exist in the catalog; one route per branch with valid operators. Retries with the error. <code>input_keys</code> is derived from the actual references.</div></div>
-      <div class="check"><div class="where">validate.py</div><div>Walks execution order: each key is written before it's read, with a warning when only some branches write it. Missing agents, file/name mismatch, literal credentials, router targets and default route, fields outside the agent syntax.</div></div>
-      <div class="check"><div class="where">generate.py</div><div>Leakage guards: refuses a catalog that contains agent documents or was built from files in the comparison folder, and refuses a comparison folder that is also the output folder.</div></div>
-      <div class="check"><div class="where">tests/o2a_gen</div><div>36 offline tests on a scripted fake model, run against both engines. They check that no text from the existing YAMLs appears in any model call and that each agent's prompt contains its class syntax.</div></div>
-    </div>
-  </section>
-
-  <section aria-labelledby="ext">
-    <h2 id="ext">Extension points</h2>
-    <div class="grid2">
-      <div class="panel">
-        <h3>Change the model or provider</h3>
-        <ul>
-          <li><code>providers/tachyon_provider.py</code>: three TODO blocks</li>
-          <li><code>models.*</code> in config: extract, ground, navigate, catalog_summary, catalog_cards, llm_agent</li>
-        </ul>
-      </div>
-      <div class="panel">
-        <h3>Change what gets generated</h3>
-        <ul>
-          <li><code>plan.KIND_TO_CLASS</code>: which agent_class each step kind becomes</li>
-          <li><code>generation.agent_templates</code>: fixed fields per class</li>
-          <li><code>ground._SPECS</code>: output schema and checks per class</li>
-        </ul>
-      </div>
-      <div class="panel">
-        <h3>Change the catalog</h3>
-        <ul>
-          <li><code>catalog.engine</code>: <code>native</code> or <code>corpus2skill</code></li>
-          <li><code>leaf_max</code>, <code>branching</code>, <code>max_depth</code>, <code>use_cards</code></li>
-          <li><code>embedding.provider</code> and <code>model</code></li>
-        </ul>
-      </div>
-    </div>
-  </section>
-
-  <footer>
-    <p>Source: <span class="mono">o2a_gen/</span> in janasaigowtham/Agentic_ai, branch <span class="mono">claude/sharp-pascal-p3v95o</span>. Setup and commands are in <span class="mono">o2a_gen/README.md</span>. This page is also saved as <span class="mono">o2a_gen/docs/architecture.html</span>.</p>
-  </footer>
 </div>
-</body>
-</html>
