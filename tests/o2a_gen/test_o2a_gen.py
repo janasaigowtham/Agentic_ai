@@ -445,3 +445,80 @@ def test_saved_vectors_ignored_when_dimensions_change(tmp_path):
     base = {"provider": "llm", "model": "fake-embed"}
     assert load_vectors(tmp_path, base) is not None
     assert load_vectors(tmp_path, {**base, "dimensions": 1024}) is None
+
+
+# ---------------------------------------------------------------- DeepInfra provider (local stand-in server)
+
+@pytest.fixture
+def fake_deepinfra(monkeypatch):
+    import http.server
+    import threading
+    state = {"calls": 0, "fail_first": 0, "status": 200, "bodies": []}
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_POST(self):
+            state["calls"] += 1
+            body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            state["bodies"].append((self.headers.get("Authorization"), body))
+            if state["fail_first"] > 0:
+                state["fail_first"] -= 1
+                self._reply(429, b"slow down")
+                return
+            if state["status"] != 200:
+                self._reply(state["status"], b'{"detail":"model not found"}')
+                return
+            # return rows out of order to prove we sort by index
+            rows = [{"index": i, "embedding": [float(i), 1.0]} for i in range(len(body["input"]))][::-1]
+            self._reply(200, json.dumps({"data": rows, "model": body["model"]}).encode())
+
+        def _reply(self, code, payload):
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(payload)
+
+    srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    monkeypatch.setenv("DEEPINFRA_BASE_URL", f"http://127.0.0.1:{srv.server_port}")
+    monkeypatch.setenv("DEEPINFRA_API_KEY", "test-key")
+    monkeypatch.setenv("NO_PROXY", "127.0.0.1,localhost")
+    monkeypatch.setattr("time.sleep", lambda s: None)
+    yield state
+    srv.shutdown()
+
+
+def test_deepinfra_embed_orders_retries_and_sends_model(fake_deepinfra):
+    from o2a_gen.providers.deepinfra_provider import embed
+    fake_deepinfra["fail_first"] = 2                      # two 429s, then success
+    vecs = embed(texts=["a", "b", "c"], model="nvidia/Nemotron-3-Embed-8B-BF16")
+    assert vecs == [[0.0, 1.0], [1.0, 1.0], [2.0, 1.0]]   # input order restored
+    assert fake_deepinfra["calls"] == 3
+    auth, body = fake_deepinfra["bodies"][-1]
+    assert auth == "Bearer test-key" and body["model"] == "nvidia/Nemotron-3-Embed-8B-BF16"
+
+
+def test_deepinfra_embed_reports_bad_model_without_retrying(fake_deepinfra):
+    from o2a_gen.providers.deepinfra_provider import EmbeddingError, embed
+    fake_deepinfra["status"] = 404
+    with pytest.raises(EmbeddingError, match="404.*model not found"):
+        embed(texts=["a"], model="wrong/model")
+    assert fake_deepinfra["calls"] == 1
+
+
+def test_deepinfra_embed_requires_key(monkeypatch):
+    from o2a_gen.providers.deepinfra_provider import EmbeddingError, embed
+    monkeypatch.delenv("DEEPINFRA_API_KEY", raising=False)
+    with pytest.raises(EmbeddingError, match="DEEPINFRA_API_KEY"):
+        embed(texts=["a"], model="m")
+
+
+def test_deepinfra_embed_works_through_skill_tree_embedder(fake_deepinfra):
+    from o2a_gen.llm import CallableClient
+    from o2a_gen.skilltree import embed_texts
+    client = CallableClient(chat=lambda **k: "", embed="o2a_gen.providers.deepinfra_provider:embed")
+    arr = embed_texts(client, ["x", "y"], {"provider": "llm",
+                                           "model": "nvidia/Nemotron-3-Embed-8B-BF16"})
+    assert arr.shape == (2, 2)

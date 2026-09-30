@@ -3,7 +3,7 @@
 llm:
   provider: callable                                   # callable | fake (dry run)
   chat: o2a_gen.providers.tachyon_provider:chat        # module:function
-  embed: o2a_gen.providers.tachyon_provider:embed      # only used if embedding.provider = llm
+  embed: o2a_gen.providers.deepinfra_provider:embed    # used when embedding.provider = llm (needs DEEPINFRA_API_KEY)
   max_concurrency: 8                                   # parallel calls to Tachyon
 
 # Model identifiers exactly as Tachyon expects them. Use the same names you put
@@ -20,14 +20,15 @@ models:
 # the procedure's sections, so their vectors can be compared. Changing any of model / dimensions /
 # document_template means rebuilding the catalog (compile-catalog); old vectors are then ignored.
 embedding:
-  provider: local                  # local = sentence-transformers on this GPU; llm = llm.embed above
-  model: nvidia/Nemotron-3-Embed-8B-BF16   # or a local path to an internal mirror
-  trust_remote_code: true          # needed for models that ship custom code
-  dtype: bfloat16                  # ~16 GB of GPU memory for the 8B model
-  device: cuda                     # omit to let sentence-transformers choose
-  batch_size: 16
-  max_seq_length: 4096             # inputs are ~2-3k characters; caps memory (model allows 32k)
+  provider: llm                    # llm = the llm.embed function above (DeepInfra); local = sentence-transformers on a GPU
+  model: nvidia/Nemotron-3-Embed-8B-BF16   # the ID as DeepInfra lists it (their API page shows nvidia/Nemotron-3-Embed-8B)
+  batch_size: 32                   # texts per API call
   dimensions: 1024                 # optional: keep the first N of 4096 dims (smaller vectors.npy)
+  # For provider: local only (self-hosted, ~16 GB GPU):
+  # trust_remote_code: true
+  # dtype: bfloat16
+  # device: cuda
+  # max_seq_length: 4096
   # Documents are embedded as-is (no prefix). Procedure-section -> catalog matching is a search,
   # so it may use the model's query format. Check the exact format on the model card.
   query_template: "Instruct: {instruction}\nQuery: {text}"
