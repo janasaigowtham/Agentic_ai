@@ -127,24 +127,68 @@ def plain_card(d: CatalogDoc) -> dict:
 # 2. embeddings
 # --------------------------------------------------------------------------
 
-def embed_texts(client: LLMClient, texts: list[str], embedding: dict, batch: int = 32) -> np.ndarray:
+_MODELS: dict[tuple, object] = {}   # loaded sentence-transformers models, one per config
+
+
+def _local_model(embedding: dict):
+    """Load a sentence-transformers model once per process (an 8B model is ~16 GB)."""
+    try:
+        from sentence_transformers import SentenceTransformer
+    except ImportError:
+        raise ImportError("embedding.provider 'local' needs: pip install sentence-transformers") from None
+    key = (embedding.get("model"), bool(embedding.get("trust_remote_code", False)),
+           embedding.get("device"), embedding.get("dtype"))
+    if key not in _MODELS:
+        kwargs: dict = {"trust_remote_code": key[1]}
+        if key[2]:
+            kwargs["device"] = key[2]
+        if key[3]:
+            kwargs["model_kwargs"] = {"torch_dtype": key[3]}
+        model = SentenceTransformer(key[0], **kwargs)
+        if embedding.get("max_seq_length"):
+            model.max_seq_length = int(embedding["max_seq_length"])
+        _MODELS[key] = model
+    return _MODELS[key]
+
+
+def _templated(texts: list[str], embedding: dict, as_query: bool) -> list[str]:
+    """Apply `query_template` / `document_template` ({text}, {instruction}) if configured.
+    With no query_template, queries are embedded exactly like documents (symmetric)."""
+    tmpl = embedding.get("query_template") if as_query else None
+    tmpl = tmpl or embedding.get("document_template")
+    if not tmpl:
+        return texts
+    instr = embedding.get("query_instruction", "")
+    return [tmpl.format(text=t, instruction=instr) for t in texts]
+
+
+def embed_texts(client: LLMClient, texts: list[str], embedding: dict, batch: int | None = None,
+                as_query: bool = False) -> np.ndarray:
+    """Unit-length vectors, one per text. ``as_query`` uses `query_template` if set."""
     provider = embedding.get("provider", "local")
     model = embedding.get("model", "")
+    batch = int(embedding.get("batch_size", 32)) if batch is None else batch
+    texts = _templated(texts, embedding, as_query)
     if provider == "llm":
         vecs: list[list[float]] = []
         for i in range(0, len(texts), batch):
             vecs.extend(client.embed(texts[i:i + batch], model=model))
         arr = np.asarray(vecs, dtype=np.float32)
     elif provider == "local":
-        try:
-            from sentence_transformers import SentenceTransformer
-        except ImportError:
-            raise ImportError("embedding.provider 'local' needs: pip install sentence-transformers")
-        arr = np.asarray(SentenceTransformer(model).encode(texts, batch_size=batch), dtype=np.float32)
+        arr = np.asarray(_local_model(embedding).encode(texts, batch_size=batch), dtype=np.float32)
     else:
         raise ValueError(f"unknown embedding.provider {provider!r}")
+    if embedding.get("dimensions"):          # Matryoshka-style: keep the leading dimensions
+        arr = arr[:, :int(embedding["dimensions"])]
     norms = np.linalg.norm(arr, axis=1, keepdims=True)
     return arr / np.where(norms == 0, 1, norms)
+
+
+def embedding_signature(embedding: dict) -> dict:
+    """What must match for two sets of vectors to be comparable."""
+    return {"provider": embedding.get("provider"), "model": embedding.get("model"),
+            "dimensions": embedding.get("dimensions"),
+            "document_template": embedding.get("document_template")}
 
 
 # --------------------------------------------------------------------------
@@ -328,17 +372,16 @@ def write_tree(root: Node, out_dir: Path, docs: list[CatalogDoc], cards: dict[st
 
 def save_vectors(out_dir: Path, ids: list[str], matrix: np.ndarray, embedding: dict) -> None:
     np.save(out_dir / "vectors.npy", np.asarray(matrix, dtype=np.float32))
-    (out_dir / "vectors.json").write_text(json.dumps(
-        {"ids": ids, "provider": embedding.get("provider"), "model": embedding.get("model")}))
+    (out_dir / "vectors.json").write_text(json.dumps({"ids": ids, **embedding_signature(embedding)}))
 
 
 def load_vectors(root: Path, embedding: dict) -> tuple[list[str], np.ndarray] | None:
-    """Saved catalog vectors, if they were made with the same embedding model."""
+    """Saved catalog vectors, if they were made with the same embedding model and settings."""
     meta_path, arr_path = Path(root) / "vectors.json", Path(root) / "vectors.npy"
     if not (meta_path.exists() and arr_path.exists()):
         return None
     meta = json.loads(meta_path.read_text())
-    if (meta.get("provider"), meta.get("model")) != (embedding.get("provider"), embedding.get("model")):
+    if {k: meta.get(k) for k in embedding_signature(embedding)} != embedding_signature(embedding):
         return None
     return meta["ids"], np.load(arr_path)
 

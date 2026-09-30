@@ -238,16 +238,19 @@ def build_procedure_tree(client: LLMClient, text: str, title: str, out_dir: Path
     saved = load_vectors(catalog_root, embedding) if catalog_root else None
     if saved is not None:
         ids, mat = saved
+        # Section -> catalog is a search: embed sections as queries if a query_template is set.
+        qvecs = embed_texts(client, texts, embedding, as_query=True) \
+            if embedding.get("query_template") else vecs
         kinds = catalog_index or {}
         keep = [k for k, cid in enumerate(ids) if kinds.get(cid, {}).get("kind") != "schema"]
         if keep:
             sub = mat[keep]
-            csims = vecs @ sub.T
+            csims = qvecs @ sub.T
             for i, d in enumerate(docs):
                 top = np.argsort(-csims[i])[:hint_k]
                 hints[d.id] = [(ids[keep[j]], float(csims[i, j])) for j in top]
     elif catalog_root:
-        print("  (catalog has no saved vectors for this embedding model: "
+        print("  (catalog has no saved vectors for this embedding model/settings: "
               "rebuild it with compile-catalog to get tool & data hints)")
 
     tree = ProcTree(root, docs, related, hints, out_dir)

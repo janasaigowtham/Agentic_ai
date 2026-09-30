@@ -111,6 +111,7 @@ class FakeLLM:
         self.rules = list(rules or [])
         self.default = default
         self.calls: list[dict] = []
+        self.embed_calls: list[list[str]] = []
         self.usage = UsageMeter()
 
     def complete(self, *, model, messages, system=None, max_tokens=1024, temperature=0.0):
@@ -132,6 +133,7 @@ class FakeLLM:
     def embed(self, texts, *, model):
         # Stable bag-of-words hashing vectors so similar texts land together.
         import hashlib
+        self.embed_calls.append(list(texts))
         dim = 64
         out = []
         for t in texts:

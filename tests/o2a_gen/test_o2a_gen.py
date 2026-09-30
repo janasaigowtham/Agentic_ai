@@ -383,3 +383,65 @@ def test_extract_rejects_citations_outside_the_procedure():
     proc = extract_procedure(fake, (FIX / "procedure_sample.md").read_text(), model="m")
     assert proc.all_steps()[-1].source_lines == "20"
     assert "between 1 and 20" in fake.calls[1]["messages"][-1]["content"]
+
+
+# ---------------------------------------------------------------- embedding options (Nemotron-style)
+
+def test_local_embedder_loads_once_with_remote_code_and_shortens(monkeypatch):
+    import sys
+    import types
+
+    import numpy as np
+
+    from o2a_gen import skilltree
+    loads, encoded = [], []
+
+    class FakeST:
+        def __init__(self, name, **kwargs):
+            loads.append((name, kwargs))
+
+        def encode(self, texts, batch_size):
+            encoded.extend(texts)
+            return np.ones((len(texts), 4096), dtype=np.float32)
+
+    monkeypatch.setitem(sys.modules, "sentence_transformers",
+                        types.SimpleNamespace(SentenceTransformer=FakeST))
+    monkeypatch.setattr(skilltree, "_MODELS", {})
+    emb = {"provider": "local", "model": "nvidia/Nemotron-3-Embed-8B-BF16",
+           "trust_remote_code": True, "dtype": "bfloat16", "dimensions": 1024,
+           "query_template": "Instruct: {instruction}\nQuery: {text}",
+           "query_instruction": "Find catalog entries this procedure step needs"}
+    docs = skilltree.embed_texts(None, ["table A", "tool B"], emb)
+    qs = skilltree.embed_texts(None, ["pull loan data"], emb, as_query=True)
+    assert len(loads) == 1                                  # 16 GB model loaded once
+    assert loads[0][1]["trust_remote_code"] is True
+    assert loads[0][1]["model_kwargs"] == {"torch_dtype": "bfloat16"}
+    assert docs.shape == (2, 1024) and qs.shape == (1, 1024)
+    assert np.allclose(np.linalg.norm(docs, axis=1), 1.0)
+    assert encoded[:2] == ["table A", "tool B"]             # documents: no prefix
+    assert encoded[2].startswith("Instruct: Find catalog entries")
+
+
+def test_query_template_used_only_for_section_to_catalog_search(tmp_path):
+    from o2a_gen.proctree import build_procedure_tree
+    tmpl = {"query_template": "Instruct: find inputs\nQuery: {text}"}
+    cfg = make_cfg()
+    cfg.embedding = {**cfg.embedding, **tmpl}
+    compile_catalog(FIX / "catalog_src", tmp_path / "cat", make_fake(), cfg)
+    fake = make_fake()
+    tree = build_procedure_tree(fake, (FIX / "procedure_sample.md").read_text(), "s", tmp_path / "p",
+                                models=cfg.models, embedding=cfg.embedding,
+                                catalog_root=tmp_path / "cat",
+                                catalog_index=Catalog(tmp_path / "cat").index)
+    doc_batch, query_batch = fake.embed_calls
+    assert not any(t.startswith("Instruct:") for t in doc_batch)    # related sections: symmetric
+    assert all(t.startswith("Instruct: find inputs") for t in query_batch)
+    assert any(tree.hints.values())
+
+
+def test_saved_vectors_ignored_when_dimensions_change(tmp_path):
+    from o2a_gen.skilltree import load_vectors
+    compile_catalog(FIX / "catalog_src", tmp_path, make_fake(), make_cfg("native"))
+    base = {"provider": "llm", "model": "fake-embed"}
+    assert load_vectors(tmp_path, base) is not None
+    assert load_vectors(tmp_path, {**base, "dimensions": 1024}) is None

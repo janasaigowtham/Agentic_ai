@@ -16,9 +16,22 @@ models:
   catalog_cards: REPLACE_WITH_TACHYON_MODEL    # compile-time, one call per catalog doc: a cheap model is fine
   llm_agent: REPLACE_WITH_TACHYON_MODEL        # written into generated LlmAgent YAMLs
 
+# One embedding model is used for BOTH the catalog (tools, metadata, agent syntax, reference) and
+# the procedure's sections, so their vectors can be compared. Changing any of model / dimensions /
+# document_template means rebuilding the catalog (compile-catalog); old vectors are then ignored.
 embedding:
-  provider: local                  # local = sentence-transformers on this machine; llm = llm.embed above
-  model: Qwen/Qwen3-Embedding-0.6B # for local: a model name or a path to an internally mirrored copy
+  provider: local                  # local = sentence-transformers on this GPU; llm = llm.embed above
+  model: nvidia/Nemotron-3-Embed-8B-BF16   # or a local path to an internal mirror
+  trust_remote_code: true          # needed for models that ship custom code
+  dtype: bfloat16                  # ~16 GB of GPU memory for the 8B model
+  device: cuda                     # omit to let sentence-transformers choose
+  batch_size: 16
+  max_seq_length: 4096             # inputs are ~2-3k characters; caps memory (model allows 32k)
+  dimensions: 1024                 # optional: keep the first N of 4096 dims (smaller vectors.npy)
+  # Documents are embedded as-is (no prefix). Procedure-section -> catalog matching is a search,
+  # so it may use the model's query format. Check the exact format on the model card.
+  query_template: "Instruct: {instruction}\nQuery: {text}"
+  query_instruction: "Given a step from an operations review procedure, find the database tables, tools and reference documents needed to implement it"
 
 catalog:
   engine: native                   # native = o2a_gen.skilltree (default); corpus2skill = vendored third-party

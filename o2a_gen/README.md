@@ -82,9 +82,18 @@ cp o2a_gen/gen_config.example.yaml gen_config.yaml
    environment, never from the file.
 2. **Choose models.** In `gen_config.yaml`, set each role under `models:` to a Tachyon model ID.
    `llm_agent` is the value written into `model:` of generated LlmAgent YAMLs.
-3. **Choose embeddings.** `embedding.provider: local` runs sentence-transformers on your
-   machine (`pip install sentence-transformers`; point `model` at an internal mirror if
-   Hugging Face is blocked). `provider: llm` uses the `embed` function in the Tachyon file instead.
+3. **Choose embeddings.** One model embeds both the catalog (tools, metadata, agent syntax,
+   reference) and the procedure's sections, so the two can be compared.
+   - `embedding.provider: local` runs sentence-transformers on this machine's GPU
+     (`pip install sentence-transformers` plus a CUDA build of torch). The example config is set
+     up for `nvidia/Nemotron-3-Embed-8B-BF16`: `trust_remote_code`, bfloat16 (about 16 GB of GPU
+     memory), optional `dimensions` to keep the first N of its 4096 dimensions, and a
+     `query_template` used only when matching procedure sections to the catalog. Documents are
+     always embedded without a prefix. The model is loaded once per run.
+   - `provider: llm` sends texts to the `embed` function in the provider file instead (for
+     example, the same model served by vLLM).
+   - Changing the model, `dimensions` or `document_template` requires rebuilding the catalog;
+     vectors saved with different settings are ignored, with a message.
 
 ## 1. Build the catalog (once, and again when the inputs change)
 
