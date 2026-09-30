@@ -1,8 +1,12 @@
 """python -m o2a_gen.webui [--host 127.0.0.1] [--port 8765]"""
 
 import argparse
+from pathlib import Path
 
 import uvicorn
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
 
 
 def main() -> None:

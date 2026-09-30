@@ -1,6 +1,7 @@
 # o2a_gen core
 pyyaml>=6.0
 numpy>=1.24
+python-dotenv>=1.0   # loads .env (API keys) into the environment
 scikit-learn>=1.3   # only for catalog.engine: corpus2skill
 # web UI (python -m o2a_gen.webui)
 fastapi>=0.110
