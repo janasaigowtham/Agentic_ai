@@ -10,6 +10,10 @@ the responder receives the parsed body and returns one of:
   {"text": ..., "slow": 0.2}          -> sends pings `slow` seconds apart before answering
 
 Every request body is kept in ``.bodies``. No network access, no API key needed.
+
+It also serves the Message Batches endpoints: a submitted batch ends on the first
+status check, and each item is answered by the same responder (an HTTP-error reply
+becomes an errored item). Submitted item lists are kept in ``.batches``.
 """
 
 from __future__ import annotations
@@ -28,6 +32,7 @@ class FakeAnthropic:
     def __init__(self, responder):
         self.responder = responder
         self.bodies: list[dict] = []
+        self.batches: list[list[dict]] = []
         self._lock = threading.Lock()
         outer = self
 
@@ -37,8 +42,45 @@ class FakeAnthropic:
             def log_message(self, *a):
                 pass
 
+            def _json(self, payload, ctype="application/json"):
+                data = payload.encode() if isinstance(payload, str) else json.dumps(payload).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", ctype)
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+            def do_GET(self):
+                n = int(self.path.rsplit("/", 1)[-1][1:])      # .../batches/bN or /results/bN
+                if self.path.startswith("/results/"):
+                    lines = []
+                    for item in outer.batches[n]:
+                        r = outer.responder(item["params"])
+                        r = {"text": r} if isinstance(r, str) else r
+                        if "status" in r:
+                            res = {"type": "errored", "error": {"type": "api_error",
+                                                                "message": r.get("body", "")}}
+                        else:
+                            text = r.get("text", "")
+                            res = {"type": "succeeded", "message": {
+                                "model": item["params"]["model"],
+                                "content": [{"type": "thinking", "thinking": ""},
+                                            {"type": "text", "text": text}],
+                                "stop_reason": r.get("stop_reason", "end_turn"),
+                                "usage": {"input_tokens": 100, "cache_read_input_tokens": 50,
+                                          "output_tokens": max(1, len(text) // 4)}}}
+                        lines.append(json.dumps({"custom_id": item["custom_id"], "result": res}))
+                    return self._json("\n".join(lines), "application/binary")
+                self._json({"id": f"b{n}", "processing_status": "ended",
+                            "results_url": f"{outer.url}/results/b{n}"})
+
             def do_POST(self):
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                if self.path.startswith("/v1/messages/batches"):
+                    with outer._lock:
+                        outer.batches.append(body.get("requests", []))
+                        n = len(outer.batches) - 1
+                    return self._json({"id": f"b{n}", "processing_status": "in_progress"})
                 with outer._lock:
                     outer.bodies.append(body)
                 r = outer.responder(body)

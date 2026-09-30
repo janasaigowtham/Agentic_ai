@@ -57,6 +57,8 @@ def main(argv: list[str] | None = None) -> int:
         from o2a_gen.catalog import compile_catalog
         skills = compile_catalog(args.src, args.out, client, cfg)
         print(f"catalog skill tree: {skills}")
+        if getattr(client, "usage", None):
+            print(f"llm usage: {client.usage.as_dict()}")
         return 0
 
     if args.cmd == "generate":

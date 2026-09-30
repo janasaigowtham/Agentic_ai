@@ -23,14 +23,13 @@ import hashlib
 import json
 import math
 import re
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
 
 from o2a_gen.catalog import CatalogDoc
-from o2a_gen.llm import LLMClient, complete_json
+from o2a_gen.llm import LLMClient, complete_json_many
 
 KIND_FOLDERS = {
     "schema": ("agent-syntax", "O2A runtime schema: fields and rules for each agent_class."),
@@ -90,25 +89,20 @@ def _hash(text: str) -> str:
 
 
 def make_cards(client: LLMClient, docs: list[CatalogDoc], model: str, cache_path: Path,
-               workers: int) -> dict[str, dict]:
+               workers: int, effort: str | None = None) -> dict[str, dict]:
     cache = json.loads(cache_path.read_text()) if cache_path.exists() else {}
     todo = [d for d in docs if cache.get(d.id, {}).get("hash") != _hash(d.text)]
-
-    def one(d: CatalogDoc) -> tuple[str, dict]:
-        try:
-            card = complete_json(client, model=model, system=CARD_SYSTEM,
-                                 prompt=CARD_PROMPT.format(text=d.text[:4000]), max_tokens=400,
-                                 validate=_check_card)
-        except ValueError as e:
-            print(f"  card for {d.name!r} built from the document itself ({e})")
-            card = {}
-        return d.id, {"title": str(card.get("title") or d.name),
-                      "one_line": str(card.get("one_line") or ""),
-                      "keywords": [str(k) for k in (card.get("keywords") or [])][:8],
-                      "hash": _hash(d.text)}
-
-    with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
-        cache.update(dict(pool.map(one, todo)))
+    got = complete_json_many(
+        client, [(d.id, CARD_SYSTEM, CARD_PROMPT.format(text=d.text[:4000])) for d in todo],
+        model=model, max_tokens=400, effort=effort, workers=workers, validate=_check_card)
+    for d in todo:
+        card = got.get(d.id) or {}
+        if not card:
+            print(f"  card for {d.name!r} built from the document itself (no valid model answer)")
+        cache[d.id] = {"title": str(card.get("title") or d.name),
+                       "one_line": str(card.get("one_line") or ""),
+                       "keywords": [str(k) for k in (card.get("keywords") or [])][:8],
+                       "hash": _hash(d.text)}
     cards = {d.id: cache[d.id] for d in docs}
     cache_path.write_text(json.dumps(cards, indent=2, ensure_ascii=False))
     return cards
@@ -260,7 +254,8 @@ Return JSON: {{"label": "2-5 word folder name, lowercase-with-hyphens",
 "summary": "2-3 sentences: what is in here and which questions it answers; mention key names"}}"""
 
 
-def describe(client: LLMClient, root: Node, cards: dict[str, dict], model: str, workers: int) -> None:
+def describe(client: LLMClient, root: Node, cards: dict[str, dict], model: str, workers: int,
+             effort: str | None = None) -> None:
     levels: list[list[Node]] = []
 
     def collect(n: Node, d: int):
@@ -273,17 +268,15 @@ def describe(client: LLMClient, root: Node, cards: dict[str, dict], model: str, 
     for top in root.children:
         collect(top, 0)
 
-    def one(n: Node) -> None:
+    def prompt(n: Node) -> str:
         if n.children:
             contents = "\n".join(f"- sub-folder '{c.label}': {c.summary}" for c in n.children)
         else:
             contents = "\n".join(f"- {cards[i]['title']}: {cards[i]['one_line']}"
                                  for i in n.doc_ids[:40])
-        try:
-            out = complete_json(client, model=model, system=FOLDER_SYSTEM,
-                                prompt=FOLDER_PROMPT.format(contents=contents), max_tokens=400)
-        except ValueError:
-            out = {}
+        return FOLDER_PROMPT.format(contents=contents)
+
+    def apply(n: Node, out: dict) -> None:
         summary = str(out.get("summary") or "").strip()
         if n.kind is None:
             n.label = _slug(str(out.get("label") or "")) or "group"
@@ -291,9 +284,13 @@ def describe(client: LLMClient, root: Node, cards: dict[str, dict], model: str, 
         else:  # kind folders keep their fixed purpose line first
             n.summary = f"{n.summary} {summary}".strip()
 
-    with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
-        for level in reversed(levels):   # children first, so parents see their summaries
-            list(pool.map(one, level))
+    for level in reversed(levels):   # children first, so parents see their summaries
+        got = complete_json_many(client, [(str(i), FOLDER_SYSTEM, prompt(n))
+                                          for i, n in enumerate(level)],
+                                 model=model, max_tokens=400, effort=effort, workers=workers)
+        for i, n in enumerate(level):
+            out = got.get(str(i))
+            apply(n, out if isinstance(out, dict) else {})
 
 
 def _slug(text: str) -> str:
@@ -398,7 +395,8 @@ def build_skill_tree(client: LLMClient, docs: list[CatalogDoc], out_dir: Path, *
     out_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"[1/4] Cards for {len(docs)} documents ...")
-    cards = (make_cards(client, docs, models["catalog_cards"], out_dir / "cards.json", opt.workers)
+    cards = (make_cards(client, docs, models["catalog_cards"], out_dir / "cards.json", opt.workers,
+                        effort=catalog.get("effort", "low"))
              if opt.use_cards else {d.id: plain_card(d) for d in docs})
 
     print("[2/4] Embedding ...")
@@ -421,7 +419,8 @@ def build_skill_tree(client: LLMClient, docs: list[CatalogDoc], out_dir: Path, *
         root.children = split(root.doc_ids, vecs, opt).children or [Node(root.doc_ids)]
 
     print("[4/4] Describing folders ...")
-    describe(client, root, cards, models["catalog_summary"], opt.workers)
+    describe(client, root, cards, models["catalog_summary"], opt.workers,
+             effort=catalog.get("effort", "low"))
     skills = write_tree(root, out_dir, docs, cards)
     meta = {"documents": len(docs), "folders": sum(1 for _ in root.walk()) - 1,
             "options": opt.__dict__, "embedding": embedding}

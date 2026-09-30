@@ -4,7 +4,8 @@ It knows nothing about any particular procedure, tools or syntax. It reads the
 agent classes, procedure headings, session keys, branch targets and required
 keys out of each prompt, so it works on any inputs. It also injects the failures
 the real API produces, so the recovery paths run: the first summary card is
-declined by the main model (answered by the fallback), the first extraction
+declined by the main model every time it is asked (as a real refusal would be, in a
+batch and again as a normal call; answered by the fallback), the first extraction
 stream breaks mid-way, and the first answer for an LLM-judgement agent references
 a session key that does not exist (the check must send it back).
 """
@@ -30,7 +31,7 @@ class SyntheticModel:
     def __init__(self, main_model: str = "claude-opus-5-5"):
         self.main = main_model
         self.lock = threading.Lock()
-        self.flags = {"refused": False, "broke": False}
+        self.flags = {"refused": None, "broke": False}   # refused: the declined card prompt
         self.bad_llm_answers: set[str] = set()
         self.counts: dict[str, int] = {}
 
@@ -42,9 +43,10 @@ class SyntheticModel:
                 GROUND_SYSTEM: "ground"}.get(system, "other")
         with self.lock:
             self.counts[kind] = self.counts.get(kind, 0) + 1
-            if kind == "card" and not self.flags["refused"] and body["model"] == self.main:
-                self.flags["refused"] = True
-                return {"text": "", "stop_reason": "refusal"}
+            if kind == "card" and body["model"] == self.main:
+                self.flags["refused"] = self.flags["refused"] or msgs[-1]
+                if msgs[-1] == self.flags["refused"]:
+                    return {"text": "", "stop_reason": "refusal"}
             if kind == "extract" and not self.flags["broke"]:
                 self.flags["broke"] = True
                 return {"stream_error": "overloaded_error"}

@@ -29,6 +29,26 @@ written from, plus a zip of everything. Existing YAMLs can be added under *Optio
 compared only after generation. Each run is kept in `runs/<id>/` (git-ignored). The UI uses
 `gen_config.anthropic.yaml`; set `O2A_GEN_CONFIG` to use another config.
 
+### Claude cost settings (`gen_config.anthropic.yaml`)
+
+- **Prompt caching.** Every system prompt is marked for caching, so repeated calls with the
+  same instructions read them at a fraction of the input price. In a conversation (retries,
+  the navigator) the latest turn is marked too, so the history is read from cache on the
+  next turn. A one-shot prompt's own text is not marked, because it is never read back.
+- **Batch API** (`llm.batch`). Compile calls that run many at once go through the Message
+  Batches API at half price: catalog summary cards, folder pages, and procedure section
+  summaries. Groups smaller than `batch_min_requests` are sent as normal calls, with no batch
+  wait. Anything a batch doesn't answer cleanly is retried as a normal call: a declined item
+  (which then goes to the fallback model), an error, or an answer that doesn't parse. If the
+  Batch endpoint itself fails, the whole group falls back to normal calls. Most batches finish
+  within minutes, and the limit is 24 hours. `O2A_ANTHROPIC_BATCH_MAX_WAIT_MINUTES` (default
+  120) cancels a batch that runs longer. Remove `llm.batch` to turn batching off while you
+  iterate.
+- **Effort.** Compile calls use `catalog.effort` (default `low`). Everything else uses
+  `O2A_ANTHROPIC_EFFORT`, or the model's default when it is unset.
+- **Usage.** `llm_usage` in the run report, and the last line of `compile-catalog`, show
+  calls, batch calls, cache reads and cache writes.
+
 Existing agent YAMLs are **not** an input. They are used only after generation, to measure
 how close the generated set is (`--compare-with`, or `compare`).
 

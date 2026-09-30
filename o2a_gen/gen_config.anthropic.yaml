@@ -6,6 +6,8 @@ llm:
   provider: callable
   chat: o2a_gen.providers.anthropic_provider:chat
   embed: o2a_gen.providers.deepinfra_provider:embed
+  batch: o2a_gen.providers.anthropic_provider:batch   # Batch API (half price) for compile calls
+  batch_min_requests: 5             # smaller groups are sent as normal calls, no batch wait
   max_concurrency: 8
 
 models:
@@ -33,6 +35,7 @@ catalog:
   use_cards: true
   partition_by_kind: true
   workers: 8
+  effort: low                       # Claude effort for cards, folder pages and section summaries
 
 generation:
   prefix: ""                        # agent / session-key prefix; empty = from the procedure name

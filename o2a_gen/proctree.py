@@ -24,13 +24,12 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
 
-from o2a_gen.llm import LLMClient, complete_json
+from o2a_gen.llm import LLMClient, complete_json_many
 from o2a_gen.skilltree import _slug, embed_texts, load_vectors
 
 _HEADING = re.compile(r"^(#{1,6})\s+(.+?)\s*#*\s*$")
@@ -142,7 +141,8 @@ SECTION_PROMPT = """Section: {title}
 Return JSON: {{"summary": "2-3 sentences: what this part of the procedure does or defines"}}"""
 
 
-def summarise(client: LLMClient, root: Section, model: str, workers: int) -> None:
+def summarise(client: LLMClient, root: Section, model: str, workers: int,
+              effort: str | None = None) -> None:
     levels: list[list[Section]] = []
 
     def collect(s: Section, d: int):
@@ -154,23 +154,23 @@ def summarise(client: LLMClient, root: Section, model: str, workers: int) -> Non
 
     collect(root, 0)
 
-    def one(s: Section):
+    def body_of(s: Section) -> str:
         body = "\n".join(s.own).strip()[:4000]
         if s.children:
             body += "\n\nSub-sections:\n" + "\n".join(f"- {c.title}: {c.summary}" for c in s.children)
-        try:
-            out = complete_json(client, model=model, system=SECTION_SYSTEM,
-                                prompt=SECTION_PROMPT.format(title=s.title, body=body),
-                                max_tokens=300)
-            s.summary = str(out.get("summary") or "").strip()
-        except ValueError:
-            s.summary = ""
-        if not s.summary:
-            s.summary = body.splitlines()[0][:200] if body else s.title
+        return body
 
-    with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
-        for level in reversed(levels):
-            list(pool.map(one, level))
+    for level in reversed(levels):   # children first, so parents see their summaries
+        bodies = [body_of(s) for s in level]
+        got = complete_json_many(
+            client, [(str(i), SECTION_SYSTEM, SECTION_PROMPT.format(title=s.title, body=b))
+                     for i, (s, b) in enumerate(zip(level, bodies))],
+            model=model, max_tokens=300, effort=effort, workers=workers)
+        for i, (s, body) in enumerate(zip(level, bodies)):
+            out = got.get(str(i))
+            s.summary = str(out.get("summary") or "").strip() if isinstance(out, dict) else ""
+            if not s.summary:
+                s.summary = body.splitlines()[0][:200] if body else s.title
 
 
 @dataclass
@@ -216,14 +216,15 @@ class ProcTree:
 def build_procedure_tree(client: LLMClient, text: str, title: str, out_dir: Path, *,
                          models: dict, embedding: dict, catalog_root: Path | None,
                          catalog_index: dict[str, dict] | None = None, workers: int = 8,
-                         related_k: int = 3, hint_k: int = 5) -> ProcTree:
+                         related_k: int = 3, hint_k: int = 5,
+                         effort: str | None = "low") -> ProcTree:
     out_dir = Path(out_dir)
     root = parse_sections(text, title)
     docs = section_docs(root)
     if not docs:
         raise ValueError("the procedure has no text")
 
-    summarise(client, root, models["catalog_summary"], workers)
+    summarise(client, root, models["catalog_summary"], workers, effort=effort)
 
     texts = [f"{d.section.title}. {d.section.summary}\n{d.text[:2000]}" for d in docs]
     vecs = embed_texts(client, texts, embedding)

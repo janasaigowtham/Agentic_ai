@@ -58,7 +58,8 @@ def generate(procedure_path: Path, out_dir: Path, cfg: GenConfig, client: LLMCli
         proc_tree = build_procedure_tree(
             client, text, procedure_path.stem, proc_dir, models=cfg.models,
             embedding=cfg.embedding, catalog_root=catalog_dir,
-            catalog_index=catalog.index if catalog else None, workers=workers)
+            catalog_index=catalog.index if catalog else None, workers=workers,
+            effort=cfg.catalog.get("effort", "low"))
         browse = CombinedCatalog(Catalog(proc_dir), catalog)
         outline = "\n".join(f"{'  ' * max(0, s.level - 1)}- {s.title} (lines {s.start}-{s.end}): "
                              f"{s.summary}" for s in proc_tree.root.walk() if s.level > 0)
