@@ -11,6 +11,24 @@ Generates the agent YAMLs for a review workflow from four inputs:
 | **Metadata** | tables, columns and connections the lookups use |
 | **Tools** | tools that LlmAgents may call (plus optional reference docs: policies, guidelines) |
 
+## Web UI (upload the inputs, get the workflow YAMLs)
+
+```bash
+cd "/path/to/Agentic_ai"
+source ../.venv/bin/activate
+pip install -r o2a_gen/requirements.txt
+export ANTHROPIC_API_KEY="..."       # Claude Opus 5.5
+export DEEPINFRA_API_KEY="..."       # Nemotron-3-Embed-8B
+python -m o2a_gen.webui              # open http://127.0.0.1:8765
+```
+
+Drop in the procedure (Markdown), tools, metadata and agent syntax, press **Generate
+workflow**, and watch each stage. The result is the agent tree with every YAML, the gaps
+(values the inputs did not give, left as empty placeholders) and the skills each agent was
+written from, plus a zip of everything. Existing YAMLs can be added under *Options*; they are
+compared only after generation. Each run is kept in `runs/<id>/` (git-ignored). The UI uses
+`gen_config.anthropic.yaml`; set `O2A_GEN_CONFIG` to use another config.
+
 Existing agent YAMLs are **not** an input. They are used only after generation, to measure
 how close the generated set is (`--compare-with`, or `compare`).
 
@@ -162,24 +180,23 @@ python -m o2a_gen compare --gold pipelines/pmi_ddn --generated generated/pmi_ddn
 coverage, class/key agreement, input-key overlap, whether each database agent reads the same
 tables, and which agents were missed or extra.
 
-## How each step type becomes an agent
+## How agent classes and fields are chosen
 
-| Procedure step | agent_class | Written from |
-|---|---|---|
-| look up / pull data | `database_agent` | metadata: tables, columns, connection env var |
-| derive / flag / format | `slv_transformation_agent` | the input data's fields + transform syntax |
-| review / judge / write | `LlmAgent` | guidelines, tools from the catalog |
-| if … otherwise … | `decision_router_agent` + one target per branch | the upstream flag |
-| supervisor approval | `agent_gate` | the gate's fields from the agent syntax |
-| a phase of several steps | `SequentialAgent` | |
-| the whole procedure | `resumable_orchestrator` | |
+Nothing in the code knows any agent class. The classes are read from the agent syntax
+document (its class table, its `agent_class:` examples, and headings that name a class), and:
 
-Each model answer is checked before it is accepted. It must reference only session keys that
-exist at that point, bind SQL values as `:params`, name only catalog tools, and include one route
-per branch. A failed answer is sent back to the model with the error, for up to 3 tries. Fields
-the syntax requires beyond these (e.g. a gate's resume event) are returned in `extra`, and the
-validator flags any field the syntax doesn't define. Fixed per-class defaults can also be set
-under `generation.agent_templates`.
+- **Extraction** gives the model the whole syntax document, and it picks each step's
+  `agent_class` from what the syntax says each class is for, plus the orchestrator class and the
+  class that runs a phase's steps in order. Branching steps get the class the syntax gives for
+  routing.
+- **Writing an agent** gives the model that class's syntax section and the documents the
+  navigator found in the compiled skill tree (the step's procedure section, its likely tools and
+  data from the embedding match, and whatever it browses to). Every value comes from those
+  documents; a value they do not give is left as `""` and listed as a gap.
+- **Checks** are class-independent: fields must be named in the class's syntax, every
+  session-key reference (`{{ key }}`, `{key}`, `:key`) must exist when the agent runs, and a
+  router must route to each branch's agent. A failing answer is sent back with the error, up to 3
+  tries; after that it is kept and the problem reported.
 
 ## Tests
 
@@ -197,5 +214,5 @@ model call. The fixture procedure, syntax and catalog are illustrative, not real
 
 - Generated YAMLs are a draft for review, not a replacement for sign-off.
 - Very long procedures may exceed the extraction call's output limit; split them by phase.
-- The step-type → agent_class mapping above is fixed in `plan.py`; change it there if your
-  runtime uses different classes for these jobs.
+- The agent classes come only from the agent syntax document; if a class is missing there, it
+  cannot be chosen.

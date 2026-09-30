@@ -99,7 +99,8 @@ def make_cards(client: LLMClient, docs: list[CatalogDoc], model: str, cache_path
             card = complete_json(client, model=model, system=CARD_SYSTEM,
                                  prompt=CARD_PROMPT.format(text=d.text[:4000]), max_tokens=400,
                                  validate=_check_card)
-        except ValueError:
+        except ValueError as e:
+            print(f"  card for {d.name!r} built from the document itself ({e})")
             card = {}
         return d.id, {"title": str(card.get("title") or d.name),
                       "one_line": str(card.get("one_line") or ""),

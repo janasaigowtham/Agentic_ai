@@ -1,0 +1,398 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>O2A Workflow Generator</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --panel-2: #f1f3f6; --line: #e2e6ec; --text: #16191f;
+  --muted: #5f6b7a; --accent: #3a5bd9; --accent-soft: #e8edff; --ok: #1f8a4c; --ok-soft: #e3f5ea;
+  --warn: #a86400; --warn-soft: #fff3de; --err: #c23b32; --err-soft: #fde8e6;
+  --code-bg: #0f1420; --code-text: #d8dee9; --c-key: #8fb3ff; --c-str: #a3d98c; --c-com: #6b7489;
+  --c-ref: #f0b46a; --c-env: #d7a0ff;
+  --radius: 12px; --shadow: 0 1px 2px rgba(16,24,40,.06), 0 1px 3px rgba(16,24,40,.08);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0d1016; --panel: #151a23; --panel-2: #1b212c; --line: #283041; --text: #e6e9ef;
+    --muted: #97a1b3; --accent: #7d97ff; --accent-soft: #1f2947; --ok: #4cc27f; --ok-soft: #15301f;
+    --warn: #f0b155; --warn-soft: #33270f; --err: #ff7b72; --err-soft: #3a1a18;
+    --code-bg: #0a0d13; --shadow: none;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0d1016; --panel: #151a23; --panel-2: #1b212c; --line: #283041; --text: #e6e9ef;
+  --muted: #97a1b3; --accent: #7d97ff; --accent-soft: #1f2947; --ok: #4cc27f; --ok-soft: #15301f;
+  --warn: #f0b155; --warn-soft: #33270f; --err: #ff7b72; --err-soft: #3a1a18;
+  --code-bg: #0a0d13; --shadow: none;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 Inter, system-ui, sans-serif; }
+.wrap { max-width: 1280px; margin: 0 auto; padding: 24px 16px 64px; }
+header { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; }
+h1 { font-size: 20px; margin: 0; letter-spacing: -.01em; }
+h1 small { display: block; font-size: 13px; font-weight: 400; color: var(--muted); margin-top: 2px; }
+h2 { font-size: 15px; margin: 0 0 12px; }
+.pills { display: flex; gap: 8px; flex-wrap: wrap; }
+.pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; font-size: 12px; background: var(--panel); border: 1px solid var(--line); color: var(--muted); }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.dot.ok { background: var(--ok); } .dot.bad { background: var(--err); }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); padding: 18px; margin-bottom: 16px; }
+.grid4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+@media (max-width: 900px) { .grid4, .grid3 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 560px) { .grid4, .grid3, .grid2 { grid-template-columns: 1fr; } }
+.drop { position: relative; border: 1.5px dashed var(--line); border-radius: 10px; padding: 14px; min-height: 118px; background: var(--panel-2); transition: border-color .15s, background .15s; cursor: pointer; }
+.drop:hover, .drop.over { border-color: var(--accent); background: var(--accent-soft); }
+.drop.filled { border-style: solid; border-color: var(--ok); background: var(--ok-soft); }
+.drop input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+.drop .t { font-weight: 600; display: flex; justify-content: space-between; gap: 8px; }
+.drop .req { font-size: 11px; font-weight: 500; color: var(--muted); }
+.drop .h { color: var(--muted); font-size: 12px; margin-top: 2px; }
+.drop ul { list-style: none; padding: 0; margin: 8px 0 0; font-size: 12px; }
+.drop li { display: flex; justify-content: space-between; gap: 8px; overflow-wrap: anywhere; }
+.drop li span:last-child { color: var(--muted); white-space: nowrap; }
+label.f { display: block; font-size: 12px; font-weight: 500; color: var(--muted); margin-bottom: 4px; }
+input[type=text] { width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--text); font: inherit; }
+input[type=text]:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+.hint { font-size: 12px; color: var(--muted); margin-top: 4px; }
+.row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.spacer { flex: 1; }
+button { font: inherit; font-weight: 600; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--text); padding: 8px 14px; cursor: pointer; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; padding: 10px 18px; }
+button:disabled { opacity: .45; cursor: not-allowed; }
+button.sm { padding: 5px 10px; font-size: 12px; }
+details summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+.stages { list-style: none; padding: 0; margin: 0; display: grid; gap: 6px; }
+.stage { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 8px; color: var(--muted); }
+.stage .ic { width: 20px; height: 20px; border-radius: 50%; border: 2px solid var(--line); display: grid; place-items: center; font-size: 11px; flex: none; }
+.stage.done { color: var(--text); } .stage.done .ic { background: var(--ok); border-color: var(--ok); color: #fff; }
+.stage.active { color: var(--text); background: var(--accent-soft); font-weight: 600; }
+.stage.active .ic { border-color: var(--accent); border-top-color: transparent; animation: spin 0.9s linear infinite; }
+.stage.failed .ic { background: var(--err); border-color: var(--err); color: #fff; }
+@keyframes spin { to { transform: rotate(360deg); } }
+pre.log { background: var(--code-bg); color: var(--code-text); border-radius: 10px; padding: 12px; font: 12px/1.5 "JetBrains Mono", monospace; max-height: 280px; overflow: auto; margin: 10px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.banner { padding: 10px 12px; border-radius: 8px; font-size: 13px; margin-bottom: 12px; }
+.banner.err { background: var(--err-soft); color: var(--err); }
+.banner.warn { background: var(--warn-soft); color: var(--warn); }
+.stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }
+@media (max-width: 800px) { .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.stat { background: var(--panel-2); border-radius: 10px; padding: 10px 12px; }
+.stat b { display: block; font-size: 20px; }
+.stat span { font-size: 12px; color: var(--muted); }
+.stat.warn b { color: var(--warn); } .stat.err b { color: var(--err); }
+.results { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 14px; }
+@media (max-width: 860px) { .results { grid-template-columns: 1fr; } }
+.tree { border: 1px solid var(--line); border-radius: 10px; padding: 6px; max-height: 640px; overflow: auto; }
+.node { display: flex; align-items: center; gap: 6px; padding: 5px 6px; border-radius: 6px; cursor: pointer; font-size: 13px; min-width: 0; }
+.node:hover { background: var(--panel-2); } .node.sel { background: var(--accent-soft); }
+.node .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+.cls { font: 500 10.5px "JetBrains Mono", monospace; padding: 1px 6px; border-radius: 4px; background: var(--panel-2); color: var(--muted); white-space: nowrap; border: 1px solid var(--line); }
+.flag { font-size: 10.5px; padding: 1px 6px; border-radius: 4px; background: var(--warn-soft); color: var(--warn); white-space: nowrap; }
+.viewer { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; min-width: 0; }
+.vhead { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--line); background: var(--panel-2); flex-wrap: wrap; }
+.vhead .fn { font: 500 13px "JetBrains Mono", monospace; overflow-wrap: anywhere; }
+pre.yaml { margin: 0; background: var(--code-bg); color: var(--code-text); padding: 14px; font: 12.5px/1.6 "JetBrains Mono", monospace; overflow: auto; max-height: 560px; }
+.k { color: var(--c-key); } .s { color: var(--c-str); } .c { color: var(--c-com); font-style: italic; }
+.r { color: var(--c-ref); } .e { color: var(--c-env); } .ph { background: rgba(240,177,85,.25); color: var(--c-ref); border-radius: 3px; }
+.notes { padding: 10px 12px; border-top: 1px solid var(--line); font-size: 13px; }
+.notes h4 { margin: 0 0 4px; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.notes ul { margin: 0 0 8px; padding-left: 18px; }
+.muted { color: var(--muted); }
+table.cmp { width: 100%; border-collapse: collapse; font-size: 13px; }
+table.cmp td { padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; overflow-wrap: anywhere; }
+table.cmp td:first-child { color: var(--muted); width: 40%; }
+.hidden { display: none !important; }
+.runs { font-size: 12px; }
+select { font: inherit; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--text); max-width: 100%; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>O2A Workflow Generator
+      <small>Procedure + tools + metadata + agent syntax → workflow YAMLs, via embedding + LLM skills</small>
+    </h1>
+    <div class="pills" id="pills"></div>
+  </header>
+
+  <div id="keyBanner" class="banner err hidden"></div>
+
+  <section class="card" id="inputsCard">
+    <div class="row" style="margin-bottom:12px">
+      <h2 style="margin:0">Inputs</h2><div class="spacer"></div>
+      <div class="runs row"><span class="muted">Earlier runs</span><select id="runs"><option value="">—</option></select></div>
+    </div>
+    <div class="grid4">
+      <div class="drop" data-key="procedure">
+        <input type="file" accept=".md,.txt,.markdown">
+        <div class="t">Procedure <span class="req">required</span></div>
+        <div class="h">The review procedure, as Markdown</div><ul></ul>
+      </div>
+      <div class="drop" data-key="tools" data-multi>
+        <input type="file" multiple accept=".yaml,.yml,.json,.md,.txt">
+        <div class="t">Tools <span class="req">required</span></div>
+        <div class="h">Tool / API / SQL catalog (YAML, JSON, MD)</div><ul></ul>
+      </div>
+      <div class="drop" data-key="metadata" data-multi>
+        <input type="file" multiple accept=".yaml,.yml,.json,.md,.txt,.sql,.csv">
+        <div class="t">Metadata <span class="req">required</span></div>
+        <div class="h">Tables, fields, data dictionary</div><ul></ul>
+      </div>
+      <div class="drop" data-key="syntax" data-multi>
+        <input type="file" multiple accept=".md,.txt,.yaml,.yml,.json">
+        <div class="t">Agent syntax <span class="req">required</span></div>
+        <div class="h">The agent classes and their YAML syntax</div><ul></ul>
+      </div>
+    </div>
+    <details style="margin-top:14px">
+      <summary>Options and optional files</summary>
+      <div class="grid3" style="margin-top:12px">
+        <div><label class="f" for="prefix">Name prefix</label><input type="text" id="prefix" placeholder="e.g. escrow_cya (empty = from procedure)"></div>
+        <div><label class="f" for="pinputs">Pipeline inputs</label><input type="text" id="pinputs" placeholder="e.g. loan_number (empty = from procedure)"></div>
+        <div><label class="f" for="llmModel">Model name for LLM agents</label><input type="text" id="llmModel" placeholder="empty = left as placeholder"></div>
+      </div>
+      <div class="grid2" style="margin-top:12px">
+        <div class="drop" data-key="reference" data-multi style="min-height:90px">
+          <input type="file" multiple accept=".md,.txt">
+          <div class="t">Reference docs <span class="req">optional</span></div>
+          <div class="h">Policies, guidelines</div><ul></ul>
+        </div>
+        <div class="drop" data-key="compare" data-multi style="min-height:90px">
+          <input type="file" multiple accept=".yaml,.yml">
+          <div class="t">Existing YAMLs <span class="req">optional</span></div>
+          <div class="h">Compared only after generation, never used as input</div><ul></ul>
+        </div>
+      </div>
+    </details>
+    <div class="row" style="margin-top:16px">
+      <span class="muted" id="readyText">Add the four required inputs.</span><div class="spacer"></div>
+      <button class="primary" id="goBtn" disabled>Generate workflow</button>
+    </div>
+  </section>
+
+  <section class="card hidden" id="runCard">
+    <div class="row" style="margin-bottom:10px">
+      <h2 style="margin:0">Run <span class="muted" id="runId" style="font-weight:400"></span></h2>
+      <div class="spacer"></div><span class="muted" id="elapsed"></span>
+      <button class="sm hidden" id="stopBtn">Stop</button>
+    </div>
+    <div id="runError" class="banner err hidden"></div>
+    <ul class="stages" id="stages"></ul>
+    <details id="logBox"><summary>Log</summary><pre class="log" id="log"></pre></details>
+  </section>
+
+  <section class="card hidden" id="resCard">
+    <div class="row" style="margin-bottom:12px">
+      <h2 style="margin:0">Workflow YAMLs</h2><div class="spacer"></div>
+      <button id="zipBtn">Download all (.zip)</button>
+    </div>
+    <div class="stats" id="stats"></div>
+    <div class="results">
+      <div class="tree" id="tree"></div>
+      <div class="viewer">
+        <div class="vhead"><span class="fn" id="fname">Select an agent</span><span class="cls" id="fclass"></span><div class="spacer"></div>
+          <button class="sm" id="copyBtn">Copy</button><button class="sm" id="dlBtn">Download</button></div>
+        <pre class="yaml" id="yaml"></pre>
+        <div class="notes" id="notes"></div>
+      </div>
+    </div>
+    <div id="cmpBox" class="hidden" style="margin-top:16px">
+      <h2>Comparison with existing YAMLs</h2>
+      <table class="cmp" id="cmp"></table>
+    </div>
+  </section>
+</div>
+
+<script>
+const $ = (s, el = document) => el.querySelector(s);
+const files = { procedure: [], tools: [], metadata: [], syntax: [], reference: [], compare: [] };
+const REQUIRED = ["procedure", "tools", "metadata", "syntax"];
+let keysOk = false, current = null, poll = null, selected = null, lastYaml = "";
+
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const kb = n => n < 1024 ? n + " B" : (n / 1024).toFixed(1) + " KB";
+
+async function status() {
+  const s = await (await fetch("/api/status")).json();
+  keysOk = s.anthropic_key && s.deepinfra_key;
+  $("#pills").innerHTML = [
+    `<span class="pill"><span class="dot ${s.anthropic_key ? "ok" : "bad"}"></span>LLM ${esc(s.llm.join(", "))}</span>`,
+    `<span class="pill"><span class="dot ${s.deepinfra_key ? "ok" : "bad"}"></span>Embedding ${esc(s.embedding)}</span>`,
+  ].join("");
+  const missing = [!s.anthropic_key && "ANTHROPIC_API_KEY", !s.deepinfra_key && "DEEPINFRA_API_KEY"].filter(Boolean);
+  $("#keyBanner").classList.toggle("hidden", !missing.length);
+  $("#keyBanner").textContent = missing.length ? `Set ${missing.join(" and ")} in the terminal that runs the server, then restart it.` : "";
+  refreshReady();
+}
+
+function renderDrop(drop) {
+  const key = drop.dataset.key, list = files[key];
+  drop.classList.toggle("filled", list.length > 0);
+  $("ul", drop).innerHTML = list.map(f => `<li><span>${esc(f.name)}</span><span>${kb(f.size)}</span></li>`).join("");
+}
+function addFiles(drop, fl) {
+  const key = drop.dataset.key, arr = [...fl];
+  files[key] = drop.hasAttribute("data-multi") ? [...files[key].filter(f => !arr.some(a => a.name === f.name)), ...arr] : arr.slice(0, 1);
+  renderDrop(drop); refreshReady();
+}
+document.querySelectorAll(".drop").forEach(drop => {
+  const input = $("input", drop);
+  input.addEventListener("change", () => { addFiles(drop, input.files); input.value = ""; });
+  ["dragenter", "dragover"].forEach(e => drop.addEventListener(e, ev => { ev.preventDefault(); drop.classList.add("over"); }));
+  ["dragleave", "drop"].forEach(e => drop.addEventListener(e, ev => { ev.preventDefault(); drop.classList.remove("over"); }));
+  drop.addEventListener("drop", ev => addFiles(drop, ev.dataTransfer.files));
+  drop.addEventListener("contextmenu", ev => { ev.preventDefault(); files[drop.dataset.key] = []; renderDrop(drop); refreshReady(); });
+});
+
+function refreshReady() {
+  const missing = REQUIRED.filter(k => !files[k].length);
+  const running = current && current.status === "running";
+  $("#goBtn").disabled = !!missing.length || !keysOk || running;
+  $("#readyText").textContent = running ? "A run is in progress." : missing.length
+    ? `Still needed: ${missing.join(", ")}. (Right-click a box to clear it.)` : keysOk ? "Ready." : "API keys are not set.";
+}
+
+$("#goBtn").addEventListener("click", async () => {
+  const fd = new FormData();
+  for (const [k, list] of Object.entries(files)) list.forEach(f => fd.append(k, f, f.name));
+  fd.append("prefix", $("#prefix").value);
+  fd.append("pipeline_inputs", $("#pinputs").value);
+  fd.append("llm_agent_model", $("#llmModel").value);
+  $("#goBtn").disabled = true;
+  const r = await fetch("/api/jobs", { method: "POST", body: fd });
+  const j = await r.json();
+  if (!r.ok) { alert(j.detail || "Could not start the run"); refreshReady(); return; }
+  location.hash = j.id; watch(j.id); loadRuns();
+});
+
+function watch(id) {
+  clearInterval(poll); selected = null;
+  $("#resCard").classList.add("hidden");
+  const tick = async () => {
+    const r = await fetch(`/api/jobs/${id}`);
+    if (!r.ok) { clearInterval(poll); return; }
+    current = await r.json(); renderRun(); refreshReady();
+    if (current.status !== "running") { clearInterval(poll); renderResults(); loadRuns(); }
+  };
+  tick(); poll = setInterval(tick, 2000);
+}
+
+function renderRun() {
+  const j = current;
+  $("#runCard").classList.remove("hidden");
+  $("#runId").textContent = `${j.id} · ${(j.inputs.procedure || [])[0] || ""}`;
+  const end = j.finished || Date.now() / 1000, secs = Math.round(end - j.created);
+  $("#elapsed").textContent = `${j.status === "running" ? "Running" : j.status === "done" ? "Finished" : "Failed"} · ${Math.floor(secs / 60)}m ${secs % 60}s`;
+  const idx = j.stages.findIndex(s => s.id === j.stage);
+  $("#stages").innerHTML = j.stages.map((s, i) => {
+    let cls = "", ic = i + 1;
+    if (j.status === "done" || i < idx) { cls = "done"; ic = "✓"; }
+    else if (i === idx) { cls = j.status === "failed" ? "failed" : "active"; ic = j.status === "failed" ? "!" : ""; }
+    return `<li class="stage ${cls}"><span class="ic">${ic}</span>${esc(s.label)}</li>`;
+  }).join("");
+  $("#stopBtn").classList.toggle("hidden", j.status !== "running");
+  $("#runError").classList.toggle("hidden", !j.error);
+  $("#runError").textContent = j.error || "";
+  const log = $("#log"), atBottom = log.scrollTop + log.clientHeight >= log.scrollHeight - 20;
+  log.textContent = j.log.join("\n");
+  if (atBottom) log.scrollTop = log.scrollHeight;
+  if (j.status === "failed") $("#logBox").open = true;
+}
+
+function perAgentNotes() {
+  const map = {};
+  for (const g of (current.report?.grounding || [])) map[g.agent] = g;
+  return map;
+}
+
+function renderResults() {
+  const j = current;
+  if (!j.files.length) return;
+  $("#resCard").classList.remove("hidden");
+  const rep = j.report || {}, notes = perAgentNotes();
+  const gaps = Object.values(notes).reduce((n, g) => n + (g.gaps || []).length, 0);
+  const u = rep.llm_usage || {};
+  $("#stats").innerHTML = [
+    ["Agents", j.files.length, ""], ["Gaps (placeholders)", gaps, gaps ? "warn" : ""],
+    ["Warnings", rep.warnings ?? 0, rep.warnings ? "warn" : ""], ["Errors", rep.errors ?? 0, rep.errors ? "err" : ""],
+    ["LLM calls", u.calls ?? "–", ""],
+  ].map(([l, v, c]) => `<div class="stat ${c}"><b>${v}</b><span>${l}</span></div>`).join("");
+
+  const byName = Object.fromEntries(j.agents.map(a => [a.name, a]));
+  const childSet = new Set(j.agents.flatMap(a => a.children));
+  const roots = j.agents.filter(a => !childSet.has(a.name));
+  const seen = new Set(), rows = [];
+  const walk = (a, depth) => {
+    if (!a || seen.has(a.name)) return; seen.add(a.name);
+    const n = notes[a.name] || {}, flagged = (n.gaps || []).length + (n.warnings || []).length;
+    rows.push(`<div class="node" data-file="${esc(a.file)}" style="padding-left:${6 + depth * 16}px" title="${esc(a.description)}">
+      <span class="nm">${esc(a.name)}</span>${flagged ? `<span class="flag">${flagged}</span>` : ""}<span class="cls">${esc(a.agent_class)}</span></div>`);
+    a.children.forEach(c => walk(byName[c], depth + 1));
+  };
+  roots.forEach(r => walk(r, 0));
+  j.agents.forEach(a => walk(a, 0));
+  $("#tree").innerHTML = rows.join("");
+  document.querySelectorAll(".node").forEach(el => el.addEventListener("click", () => show(el.dataset.file)));
+  show(selected && j.files.includes(selected) ? selected : (roots[0] || j.agents[0]).file);
+
+  const cmp = rep.comparison;
+  $("#cmpBox").classList.toggle("hidden", !cmp);
+  if (cmp) $("#cmp").innerHTML = Object.entries(cmp).filter(([, v]) => typeof v !== "object" || Array.isArray(v))
+    .map(([k, v]) => `<tr><td>${esc(k.replace(/_/g, " "))}</td><td>${esc(Array.isArray(v) ? v.join(", ") || "—" : v)}</td></tr>`).join("");
+}
+
+function highlight(src) {
+  return src.split("\n").map(line => {
+    if (/^\s*#/.test(line)) return `<span class="c">${esc(line)}</span>`;
+    let h = esc(line);
+    h = h.replace(/^(\s*-?\s*)([\w$.-]+)(:)(?=\s|$)/, (m, a, k, c) => `${a}<span class="k">${k}</span>${c}`);
+    h = h.replace(/(\$\{[^}]+\})/g, '<span class="e">$1</span>');
+    h = h.replace(/(\{\{[^}]*\}\})/g, '<span class="r">$1</span>');
+    h = h.replace(/(:\s)(&quot;&quot;|'')\s*$/, '$1<span class="ph">$2</span>');
+    return h;
+  }).join("\n");
+}
+
+async function show(file) {
+  selected = file;
+  document.querySelectorAll(".node").forEach(el => el.classList.toggle("sel", el.dataset.file === file));
+  const a = current.agents.find(x => x.file === file) || {};
+  $("#fname").textContent = file; $("#fclass").textContent = a.agent_class || "";
+  lastYaml = await (await fetch(`/api/jobs/${current.id}/files/${encodeURIComponent(file)}`)).text();
+  $("#yaml").innerHTML = highlight(lastYaml);
+  const n = perAgentNotes()[a.name] || {};
+  const docs = (n.catalog_docs || []).map(d => `${d.name || d.id} <span class="muted">(${d.kind || "doc"})</span>`);
+  const sec = n.procedure_section ? `<h4>Procedure section</h4><div style="margin-bottom:8px">${esc(n.procedure_section)}</div>` : "";
+  const list = (t, xs, raw) => xs.length ? `<h4>${t}</h4><ul>${xs.map(x => `<li>${raw ? x : esc(x)}</li>`).join("")}</ul>` : "";
+  $("#notes").innerHTML = (sec + list("Gaps — values not found in the inputs", n.gaps || []) +
+    list("Warnings", n.warnings || []) + list("Skills used", docs, true)) || `<span class="muted">No gaps or warnings for this agent.</span>`;
+}
+
+$("#stopBtn").addEventListener("click", async () => {
+  if (current && confirm("Stop this run?")) await fetch(`/api/jobs/${current.id}/cancel`, { method: "POST" });
+});
+$("#copyBtn").addEventListener("click", () => navigator.clipboard.writeText(lastYaml));
+$("#dlBtn").addEventListener("click", () => {
+  if (!selected) return;
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([lastYaml], { type: "text/yaml" })); a.download = selected; a.click();
+});
+$("#zipBtn").addEventListener("click", () => { if (current) location.href = `/api/jobs/${current.id}/download`; });
+
+async function loadRuns() {
+  const runs = await (await fetch("/api/jobs")).json();
+  $("#runs").innerHTML = `<option value="">—</option>` + runs.map(r =>
+    `<option value="${esc(r.id)}" ${current && current.id === r.id ? "selected" : ""}>${esc(r.id)} · ${esc(r.procedure)} · ${esc(r.status)}</option>`).join("");
+}
+$("#runs").addEventListener("change", e => { if (e.target.value) { location.hash = e.target.value; watch(e.target.value); } });
+
+status(); loadRuns();
+if (location.hash.length > 1) watch(location.hash.slice(1));
+</script>
+</body>
+</html>

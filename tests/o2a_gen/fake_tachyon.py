@@ -19,41 +19,43 @@ PROCEDURE_JSON = {
     "name": "pmi_ddn_review",
     "description": "Decide whether a PMI deletion denial is supported.",
     "inputs": ["loan_number"],
+    "orchestrator_class": "resumable_orchestrator",
+    "group_class": "SequentialAgent",
     "phases": [
         {"id": "P1", "title": "Pre-process", "steps": [
-            {"id": "S1", "title": "Fetch MSP loan data", "kind": "lookup", "source_lines": "8",
+            {"id": "S1", "title": "Fetch MSP loan data", "agent_class": "database_agent", "source_lines": "8",
              "text": "Pull the loan from MSP: investor class code and the ICMP letter effective date.",
              "produces": "msp loan data", "uses": ["loan_number"]},
-            {"id": "S2", "title": "ICMP required flag", "kind": "compute", "source_lines": "9",
+            {"id": "S2", "title": "ICMP required flag", "agent_class": "slv_transformation_agent", "source_lines": "9",
              "text": "Y if the letter effective date is present, otherwise N.",
              "produces": "icmp required flag", "uses": ["S1"]},
         ]},
         {"id": "P2", "title": "ICMP check", "steps": [
-            {"id": "S3", "title": "ICMP decision", "kind": "decision", "source_lines": "12-14",
+            {"id": "S3", "title": "ICMP decision", "agent_class": "decision_router_agent", "source_lines": "12-14",
              "text": "Branch on whether an ICMP letter applies.", "depends_on": "S2", "uses": ["S2"],
              "branches": [
                  {"label": "icmp process", "when": "flag is Y", "steps": [
-                     {"id": "S4", "title": "ICMP process", "kind": "review", "source_lines": "12-13",
+                     {"id": "S4", "title": "ICMP process", "agent_class": "LlmAgent", "source_lines": "12-13",
                       "text": "Review the ICMP letter against investor guidelines.",
                       "produces": "icmp review", "uses": ["S1"]}]},
                  {"label": "no icmp path handler", "when": "flag is N", "steps": [
-                     {"id": "S5", "title": "No ICMP path handler", "kind": "compute",
+                     {"id": "S5", "title": "No ICMP path handler", "agent_class": "slv_transformation_agent",
                       "source_lines": "14", "text": "Record that no ICMP review is needed.",
                       "produces": "icmp review", "uses": []}]},
              ]},
         ]},
-        {"id": "P3", "title": "Approval", "steps": [
-            {"id": "S6", "title": "Approval gate", "kind": "approval", "source_lines": "17",
+        {"id": "P3", "title": "Approval", "direct": True, "steps": [
+            {"id": "S6", "title": "Approval gate", "agent_class": "agent_gate", "source_lines": "17",
              "text": "Send the case to a supervisor for approval.", "produces": "approval status"}]},
         {"id": "P4", "title": "Post-process", "steps": [
-            {"id": "S7", "title": "Verdict synthesizer", "kind": "review", "source_lines": "20",
+            {"id": "S7", "title": "Verdict synthesizer", "agent_class": "LlmAgent", "source_lines": "20",
              "text": "Write the denial verdict summary citing the loan data and ICMP review.",
              "produces": "verdict", "uses": ["S1", "S4"]}]},
     ],
 }
 
 _AGENT = re.compile(r"Agent to write: `(\w+)` \((\w+)\)")
-_OUT = re.compile(r"output_key: (\w+)")
+_OUT = re.compile(r"output_key \(set by the plan\): (\S+)")
 _BRANCH = re.compile(r"^- (.+?): when .+? -> (\w+)$", re.M)
 
 
@@ -66,46 +68,56 @@ def _nav(system, messages):
     return {"action": "done", "doc_ids": ids[:2], "notes": "found via find"}
 
 
+_MODEL = re.compile(r'LLM model name for any model field: "([^"]*)"')
+
+
 def _ground(system, messages):
+    """Answers as a model would from the agent syntax section in the prompt."""
     prompt = messages[0]["content"]
     name, cls = _AGENT.search(prompt).groups()
     out_key = _OUT.search(prompt).group(1)
     retrying = len(messages) > 1
     if cls == "database_agent":
-        return {"db_type": "teradata", "connection_env": "ECRM_DB_CONN",
-                "query": ("SELECT M7.LN_NO, TRIM(M7.INV_CLASS_CODE) AS inv_class_code,\n"
-                          "       M7.LETTER_EFFECTIVE_DATE AS letter_effective_date\n"
-                          "FROM MSP_LOAN_MASTER7_CS M7\n"
-                          "WHERE M7.LN_NO = LPAD(TRIM(CAST(:loan_number AS VARCHAR(10))), 10, '0')"),
-                "params": ["loan_number"], "description": "Fetch MSP loan fields.", "gaps": ""}
+        block = ("type: teradata\nconnection:\n  url: ${ENV:ECRM_DB_CONN}\nquery: |\n"
+                 "  SELECT M7.LN_NO, TRIM(M7.INV_CLASS_CODE) AS inv_class_code,\n"
+                 "         M7.LETTER_EFFECTIVE_DATE AS letter_effective_date\n"
+                 "  FROM MSP_LOAN_MASTER7_CS M7\n"
+                 "  WHERE M7.LN_NO = LPAD(TRIM(CAST(:loan_number AS VARCHAR(10))), 10, '0')\n")
+        return {"fields": {"input_keys": ["loan_number"], "default_db_yaml": block},
+                "description": "Fetch MSP loan fields.", "gaps": []}
     if cls == "slv_transformation_agent":
         if "flag" in out_key:
             expr = {"$cond": {"if": {"left": "{{ pmi_ddn_msp_loan_data[0].letter_effective_date }}",
                                      "op": "not_null"}, "then": "Y", "else": "N"}}
-            return {"transform": {out_key: expr}, "input_keys": ["pmi_ddn_msp_loan_data"],
-                    "strict": False, "description": "Y when an ICMP letter exists."}
-        return {"transform": {out_key: "NO_ICMP_REVIEW_REQUIRED"}, "input_keys": [],
+            return {"fields": {"transform": {out_key: expr}, "input_keys": ["pmi_ddn_msp_loan_data"],
+                               "strict": False}, "description": "Y when an ICMP letter exists."}
+        return {"fields": {"transform": {out_key: "NO_ICMP_REVIEW_REQUIRED"}, "input_keys": []},
                 "description": "Record that no ICMP review is needed."}
     if cls == "LlmAgent":
+        model = _MODEL.search(prompt).group(1)
         if "verdict" in name and not retrying:
-            # First answer references a key that does not exist; the validator must reject it.
-            return {"instruction": "Write the verdict using {pmi_ddn_borrower_ssn} and nothing else "
-                                   "at all, in a paragraph.", "input_keys": []}
-        extra = " and the ICMP review {pmi_ddn_icmp_review}" if "verdict" in name else ""
-        return {"instruction": ("Review the loan data {pmi_ddn_msp_loan_data}" + extra +
-                                ". Cite the letter effective date. ABSOLUTE RULE: never fabricate."),
-                "input_keys": [], "tools": ["fetch_loan_document"] if "icmp" in name else [],
+            # First answer references a key that does not exist; the check must reject it.
+            return {"fields": {"instruction": "Write the verdict using {pmi_ddn_borrower_ssn}.",
+                               "input_keys": [], "model": model}}
+        keys = ["pmi_ddn_msp_loan_data"] + (["pmi_ddn_icmp_review"] if "verdict" in name else [])
+        instr = "Review the loan data {pmi_ddn_msp_loan_data}" + (
+            " and the ICMP review {pmi_ddn_icmp_review}" if "verdict" in name else "")
+        return {"fields": {"instruction": instr + ". Cite the letter effective date.",
+                           "input_keys": keys, "model": model},
                 "description": "Review step."}
     if cls == "decision_router_agent":
         routes = []
-        for i, (label, _target) in enumerate(_BRANCH.findall(prompt)):
-            routes.append({"branch": label, "priority": 10 * (i + 1), "conditions": [
-                {"context_key": "pmi_ddn_icmp_required_flag", "operator": "eq",
-                 "value": "Y" if i == 0 else "N"}]})
-        return {"routes": routes, "description": "Route on the ICMP flag."}
-    # agent_gate: fill required fields only if the agent syntax passed in the prompt defines them
-    extra = {"resume_event": "supervisor_approval"} if "resume_event" in prompt else {}
-    return {"description": "Wait for supervisor approval.", "extra": extra}
+        for i, (label, target) in enumerate(_BRANCH.findall(prompt)):
+            routes.append({"conditions": [{"context_key": "pmi_ddn_icmp_required_flag",
+                                           "operator": "eq", "value": "Y" if i == 0 else "N"}],
+                           "target_agent": target, "priority": 10 * (i + 1)})
+        return {"fields": {"input_keys": ["pmi_ddn_icmp_required_flag"], "routes": routes},
+                "description": "Route on the ICMP flag."}
+    if cls == "agent_gate":
+        # fill required fields only if the agent syntax passed in the prompt defines them
+        fields = {"resume_event": "supervisor_approval"} if "resume_event" in prompt else {}
+        return {"fields": fields, "description": "Wait for supervisor approval."}
+    return {"fields": {}, "description": f"Runs its sub-agents ({cls})."}
 
 
 def _c2s(system, messages):

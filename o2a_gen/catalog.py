@@ -44,13 +44,13 @@ class CatalogDoc:
     text: str
 
 
-def _doc_id(kind: str, name: str, part: int = 0) -> str:
+def _doc_id(kind: str, name: str, part: int | str = 0) -> str:
     # Corpus2Skill truncates IDs to 16 chars, so keep them short and unique.
     h = hashlib.sha1(f"{kind}:{name}:{part}".encode()).hexdigest()[:13]
     return f"{kind[0]}{h}"
 
 
-def _mk(kind: str, name: str, source: Path, body: str, part: int = 0) -> CatalogDoc:
+def _mk(kind: str, name: str, source: Path, body: str, part: int | str = 0) -> CatalogDoc:
     header = f"[{kind}] {name}\n\n"
     return CatalogDoc(_doc_id(kind, name, part), kind, name, str(source), header + body.strip())
 
@@ -60,8 +60,38 @@ def _load_structured(path: Path):
     return json.loads(text) if path.suffix == ".json" else yaml.safe_load(text)
 
 
+def discover_classes(text: str) -> set[str]:
+    """Agent classes named by a syntax document: the first column of a table whose header
+    mentions a class, `agent_class: X` values that a heading also names, and headings that
+    are just a class identifier (`## database_agent`, `## 4. LlmAgent syntax`)."""
+    classes: set[str] = set()
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        if line.lstrip().startswith("|") and "class" in line.lower() and i + 1 < len(lines) \
+                and re.match(r"^\s*\|[\s:|-]+\|\s*$", lines[i + 1]):
+            for row in lines[i + 2:]:
+                if not row.lstrip().startswith("|"):
+                    break
+                cell = row.strip().strip("|").split("|")[0].strip().strip("`* ")
+                if re.fullmatch(r"[A-Za-z_]\w*", cell):
+                    classes.add(cell)
+    for h in lines:
+        if not h.startswith("#"):
+            continue
+        title = re.sub(r"^#+\s*(\d+(\.\d+)*\.?\s*)?", "", h).strip().strip("`*")
+        title = re.sub(r"\s+(syntax|class|agent class)$", "", title, flags=re.I).strip("`* ")
+        if re.fullmatch(r"[A-Za-z]\w*", title) and ("_" in title or re.search(r"[a-z][A-Z]", title)):
+            classes.add(title)
+    headings = " ".join(h for h in lines if h.startswith("#"))
+    for m in re.finditer(r"agent_class:\s*[\"']?([A-Za-z_]\w*)", text):
+        if re.search(rf"\b{re.escape(m.group(1))}\b", headings):
+            classes.add(m.group(1))
+    return classes
+
+
 def _schema(folder: Path, known_classes: set[str]) -> list[CatalogDoc]:
-    """One doc per agent_class section of the syntax document(s); the rest is 'general'."""
+    """One doc per agent_class section of the syntax document(s), including its
+    sub-headings; everything else is 'general'."""
     docs: list[CatalogDoc] = []
     for p in sorted(folder.iterdir()):
         if not p.is_file():
@@ -77,19 +107,87 @@ def _schema(folder: Path, known_classes: set[str]) -> list[CatalogDoc]:
         if p.suffix.lower() not in (".md", ".txt"):
             continue
         text = p.read_text(encoding="utf-8", errors="replace")
-        sections = re.split(r"(?m)^(?=#{1,4} )", text)
+        by_class: dict[str, list[str]] = {}
         general: list[str] = []
-        for sec in sections:
+        current, level = None, 0
+        for sec in re.split(r"(?m)^(?=#{1,6} )", text):
             heading = sec.split("\n", 1)[0]
-            cls = next((c for c in known_classes if re.search(rf"\b{re.escape(c)}\b", heading)), None)
+            hl = len(heading) - len(heading.lstrip("#")) if heading.startswith("#") else 0
+            cls = next((c for c in sorted(known_classes, key=len, reverse=True)
+                        if hl and re.search(rf"\b{re.escape(c)}\b", heading)), None)
             if cls:
-                docs.append(_mk("schema", cls, p, sec[:_MAX_CHARS]))
-            elif sec.strip():
-                general.append(sec)
+                current, level = cls, hl
+                by_class.setdefault(cls, []).append(sec)
+            elif current and hl > level:
+                by_class[current].append(sec)
+            else:
+                current = None
+                if sec.strip():
+                    general.append(sec)
+        for cls, parts in by_class.items():
+            body = "".join(parts)
+            chunks = [body[i:i + _MAX_CHARS] for i in range(0, len(body), _MAX_CHARS)]
+            for n, chunk in enumerate(chunks):
+                docs.append(_mk("schema", cls if n == 0 else f"{cls} (part {n + 1})", p, chunk, n))
         if general:
             docs.extend(_split_text("schema", f"general ({p.stem})", p, "\n".join(general)))
     return docs
 
+
+_NAME_KEYS = ("name", "tool_name", "table", "table_name", "operation_id", "operationId",
+              "agent_name", "id", "source_system_id", "title")
+
+
+def _item_name(item) -> str | None:
+    if isinstance(item, dict):
+        for k in _NAME_KEYS:
+            if isinstance(item.get(k), (str, int)) and str(item[k]).strip():
+                return str(item[k]).strip()
+    return None
+
+
+def _named_list(v) -> bool:
+    return isinstance(v, list) and any(_item_name(x) for x in v)
+
+
+def _structured_docs(kind: str, path: Path, data, name: str | None = None,
+                     trail: str = "") -> list[CatalogDoc]:
+    """Split any YAML/JSON into docs no larger than _MAX_CHARS without losing content.
+    Lists of named items (tools, tables, ...) always become one doc per item; oversized
+    mappings are split by key; the remaining small fields are kept together."""
+    name = name or _item_name(data) or path.stem
+    dumped = yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=100)
+    where = f"(from {path.name}{': ' + trail if trail else ''})\n"
+    has_named = _named_list(data) or (isinstance(data, dict) and not _item_name(data)
+                                      and any(_named_list(v) for v in data.values()))
+    if len(dumped) + len(where) <= _MAX_CHARS and not has_named:
+        return [_mk(kind, name, path, where + dumped, f"{path.name}:{trail}")]
+    docs: list[CatalogDoc] = []
+    if isinstance(data, list):
+        for i, item in enumerate(data):
+            t = f"{trail}[{i}]"
+            docs += _structured_docs(kind, path, item, _item_name(item) or f"{name}[{i}]", t)
+        return docs
+    if isinstance(data, dict):
+        small: dict = {}
+        for k, v in data.items():
+            t = f"{trail}.{k}" if trail else str(k)
+            piece = yaml.safe_dump({k: v}, sort_keys=False, allow_unicode=True, width=100)
+            if _named_list(v):
+                docs += _structured_docs(kind, path, v, str(k), t)
+            elif len(piece) <= _MAX_CHARS // 4:
+                small[k] = v
+            else:
+                docs += _structured_docs(kind, path, v, f"{name} / {k}", t)
+        if small:
+            label = name if not docs else f"{name} (overview)"
+            dumped_small = yaml.safe_dump(small, sort_keys=False, allow_unicode=True, width=100)
+            if len(dumped_small) + len(where) <= _MAX_CHARS:
+                docs.append(_mk(kind, label, path, where + dumped_small, f"{path.name}:{trail}:small"))
+            else:
+                docs += _split_text(kind, label, path, where + dumped_small)
+        return docs
+    return _split_text(kind, name, path, where + dumped)
 
 _CREATE_TABLE = re.compile(r"create\s+(?:multiset\s+|set\s+)?table\s+([\w.\"]+)", re.I)
 
@@ -124,11 +222,7 @@ def _metadata(folder: Path) -> list[CatalogDoc]:
                 name = _CREATE_TABLE.match(chunk).group(1).strip('"')
                 docs.append(_mk("metadata", name, p, f"```sql\n{chunk.strip()[:_MAX_CHARS]}\n```"))
         elif suffix in (".yaml", ".yml", ".json"):
-            data = _load_structured(p)
-            for item in data if isinstance(data, list) else [data]:
-                if isinstance(item, dict):
-                    name = str(item.get("name") or item.get("table") or p.stem)
-                    docs.append(_mk("metadata", name, p, yaml.safe_dump(item, sort_keys=False)[:_MAX_CHARS]))
+            docs.extend(_structured_docs("metadata", p, _load_structured(p)))
         elif suffix in (".md", ".txt"):
             docs.extend(_split_text("metadata", p.stem, p))
     return docs
@@ -140,11 +234,7 @@ def _tools(folder: Path) -> list[CatalogDoc]:
         if not p.is_file():
             continue
         if p.suffix.lower() in (".yaml", ".yml", ".json"):
-            data = _load_structured(p)
-            for item in data if isinstance(data, list) else [data]:
-                if isinstance(item, dict):
-                    name = str(item.get("name") or p.stem)
-                    docs.append(_mk("tool", name, p, yaml.safe_dump(item, sort_keys=False)[:_MAX_CHARS]))
+            docs.extend(_structured_docs("tool", p, _load_structured(p)))
         elif p.suffix.lower() in (".md", ".txt"):
             docs.extend(_split_text("tool", p.stem, p))
     return docs
@@ -172,15 +262,18 @@ def _split_text(kind: str, name: str, path: Path, text: str | None = None) -> li
 
 
 def collect_catalog(src: Path) -> list[CatalogDoc]:
-    from o2a_gen.validate import KNOWN_CLASSES
-
     src = Path(src)
     if (src / "agents").is_dir():
         print(f"WARNING: ignoring {src / 'agents'}: existing agent YAMLs are not a generation "
               "input. Pass them to `compare` (or generate --compare-with) instead.")
+    classes = set()
+    if (src / "schema").is_dir():
+        for p in (src / "schema").iterdir():
+            if p.suffix.lower() in (".md", ".txt"):
+                classes |= discover_classes(p.read_text(encoding="utf-8", errors="replace"))
     metadata_dir = src / "metadata" if (src / "metadata").is_dir() else src / "tables"
     sources = [
-        (src / "schema", lambda f: _schema(f, KNOWN_CLASSES)),
+        (src / "schema", lambda f: _schema(f, classes)),
         (metadata_dir, _metadata),
         (src / "tools", _tools),
         (src / "reference", lambda f: [d for p in sorted(f.glob("*"))

@@ -8,9 +8,6 @@ from pathlib import Path
 
 from o2a_gen.llm import LLMClient, complete_json
 
-STEP_KINDS = ("lookup", "compute", "review", "decision", "approval")
-
-
 @dataclass
 class Branch:
     label: str
@@ -23,11 +20,11 @@ class Step:
     id: str
     title: str
     text: str
-    kind: str
+    agent_class: str                       # one of the classes the agent syntax defines
     source_lines: str = ""
     produces: str = ""
     uses: list[str] = field(default_factory=list)
-    depends_on: str = ""                   # decision only: step whose output is tested
+    depends_on: str = ""                   # branching steps only: step whose output is tested
     branches: list[Branch] = field(default_factory=list)
 
 
@@ -36,6 +33,7 @@ class Phase:
     id: str
     title: str
     steps: list[Step]
+    direct: bool = False                   # run by the orchestrator itself, not in a group
 
 
 @dataclass
@@ -45,6 +43,8 @@ class Procedure:
     inputs: list[str]
     phases: list[Phase]
     source: str = ""
+    orchestrator_class: str = ""           # top-level agent_class, chosen from the agent syntax
+    group_class: str = ""                  # agent_class that runs a phase's steps in order
 
     def all_steps(self) -> list[Step]:
         out: list[Step] = []
@@ -86,11 +86,16 @@ def load_procedure_text(path: Path) -> str:
     return path.read_text(encoding="utf-8", errors="replace")
 
 
-EXTRACT_SYSTEM = """You convert an operations review procedure into a structured workflow for an
-agent pipeline. You do not invent steps: every step must come from the procedure text, and you
-cite the line numbers it came from. Keep the procedure's order."""
+EXTRACT_SYSTEM = """You convert an operations review procedure into a workflow of agents for the
+O2A runtime. The agent syntax document you are given is the only source of which agent classes
+exist and what each one does. You do not invent steps: every step must come from the procedure
+text, and you cite the line numbers it came from. Keep the procedure's order."""
 
-EXTRACT_PROMPT = """Procedure (each line is prefixed with its line number):
+EXTRACT_PROMPT = """Agent syntax (the complete list of agent classes and what each is for):
+
+{syntax}
+
+Procedure (each line is prefixed with its line number):
 
 {numbered}
 
@@ -98,70 +103,82 @@ Return one JSON object:
 {{
   "name": "snake_case name for the whole procedure",
   "description": "one or two sentences",
-  "inputs": ["data the review starts with, as snake_case session keys, e.g. loan_number"],
+  "inputs": ["data the review starts with, as snake_case session keys"],
+  "orchestrator_class": "the agent_class that runs the whole workflow",
+  "group_class": "the agent_class that runs a phase's steps one after another",
   "phases": [
-    {{"id": "P1", "title": "short phase title", "steps": [STEP, ...]}}
+    {{"id": "P1", "title": "short phase title", "direct": false, "steps": [STEP, ...]}}
   ]
 }}
 
 STEP = {{
   "id": "S1",                          (unique across the whole document: S1, S2, ...)
   "title": "short imperative title",
-  "text": "what the procedure says to do, close to its wording",
+  "text": "one short sentence on what this step does (its full wording is read later
+           from source_lines, so do not copy it here)",
   "source_lines": "12-15",
-  "kind": one of {kinds},
+  "agent_class": one of {classes},
   "produces": "short noun phrase for the data this step creates",
   "uses": ["ids of earlier steps whose output this step needs, or names from inputs"],
-  "depends_on": "decision only: id of the earlier step whose output the decision tests",
-  "branches": [                        (decision only, at least two)
+  "depends_on": "branching steps only: id of the earlier step whose output is tested",
+  "branches": [                        (branching steps only, at least two)
     {{"label": "short branch name", "when": "the condition in words", "steps": [STEP, ...]}}
   ]
 }}
 
-Kinds:
-- lookup: fetch data from a system or database
-- compute: derive, compare, format or flag values from data already fetched (no judgement)
-- review: needs reading, judgement, or writing text (a person would think about it)
-- decision: the procedure branches ("if ... then ... otherwise ...")
-- approval: wait for a person to approve, sign off or respond
-
 Rules:
-- A decision must test ONE simple value. If the procedure's condition is complex, add a compute
-  step just before the decision that produces that value (e.g. a Y/N flag) and set depends_on to it.
+- Choose each step's agent_class from what the agent syntax says each class is for, and from
+  what the tools and data the step needs are (a query, an API call, a deterministic
+  transformation, judgement by an LLM, waiting for an external event, ...). Prefer
+  deterministic classes; use an LLM class only where judgement or writing is needed.
+- Where the procedure branches ("if ... then ... otherwise ..."), make one step with `branches`,
+  whose agent_class is the class the syntax gives for routing. It must test ONE simple value:
+  if the condition is complex, add a step just before it that produces that value (e.g. a Y/N
+  flag) and set depends_on to it.
 - Every branch has at least one step. If a branch just continues or ends the review, add one
-  compute step that records that outcome.
+  step that records that outcome.
 - Steps inside a branch only run on that branch. When each branch ends by producing the same
   kind of outcome (e.g. "review outcome"), use the identical `produces` text in each branch
-  so later steps can read that outcome whichever branch ran."""
+  so later steps can read that outcome whichever branch ran.
+- Set "direct": true on a phase with a single step that the orchestrator should run itself
+  rather than inside a group (the agent syntax says which classes belong directly under the
+  orchestrator)."""
 
 
-def extract_procedure(client: LLMClient, text: str, *, model: str, source: str = "",
-                      outline: str = "") -> Procedure:
-    """``outline``: the compiled procedure tree's section summaries, given as a map."""
+def extract_procedure(client: LLMClient, text: str, *, model: str, classes: list[str],
+                      syntax: str, source: str = "", outline: str = "") -> Procedure:
+    """``classes``: the agent classes the syntax document defines; ``syntax``: that document's
+    text. ``outline``: the compiled procedure tree's section summaries, given as a map."""
+    if not classes:
+        raise ValueError("no agent classes found: the agent syntax document is required")
     numbered = "\n".join(f"{i}| {line}" for i, line in enumerate(text.splitlines(), 1))
-    prompt = EXTRACT_PROMPT.format(numbered=numbered, kinds=" | ".join(STEP_KINDS))
+    prompt = EXTRACT_PROMPT.format(numbered=numbered, syntax=syntax,
+                                   classes=" | ".join(sorted(classes)))
     if outline:
         prompt = f"Section outline (summaries of the procedure's sections):\n{outline}\n\n{prompt}"
     n_lines = len(text.splitlines())
 
     def validate(data):
-        _validate_raw(data)
+        _validate_raw(data, set(classes))
         _check_lines(_parse(data), n_lines)
 
     data = complete_json(client, model=model, system=EXTRACT_SYSTEM, prompt=prompt,
-                         max_tokens=8000, validate=validate)
+                         max_tokens=64000, validate=validate)
     proc = _parse(data)
     proc.source = source
     return proc
 
 
-def _validate_raw(data) -> None:
+def _validate_raw(data, classes: set[str]) -> None:
     if not isinstance(data, dict) or not isinstance(data.get("phases"), list) or not data["phases"]:
         raise ValueError("expected an object with a non-empty 'phases' list")
     proc = _parse(data)
     ids: set[str] = set()
     known = set(proc.inputs)
     problems: list[str] = []
+    for key in ("orchestrator_class", "group_class"):
+        if getattr(proc, key) not in classes:
+            problems.append(f"{key} {getattr(proc, key)!r} is not an agent class in the syntax")
 
     def walk(steps: list[Step], visible: set[str]):
         visible = set(visible)
@@ -169,12 +186,13 @@ def _validate_raw(data) -> None:
             if s.id in ids:
                 problems.append(f"duplicate step id {s.id}")
             ids.add(s.id)
-            if s.kind not in STEP_KINDS:
-                problems.append(f"{s.id}: kind {s.kind!r} is not one of {STEP_KINDS}")
+            if s.agent_class not in classes:
+                problems.append(f"{s.id}: agent_class {s.agent_class!r} is not in the agent "
+                                f"syntax; use one of {sorted(classes)}")
             for u in s.uses:
                 if u not in visible and u not in known:
                     problems.append(f"{s.id}: uses {u!r}, which is not an earlier step or input")
-            if s.kind == "decision":
+            if s.branches:
                 if len(s.branches) < 2:
                     problems.append(f"{s.id}: a decision needs at least two branches")
                 if s.depends_on not in visible:
@@ -214,7 +232,7 @@ def _parse(data: dict) -> Procedure:
             id=str(d.get("id", "")).strip(),
             title=str(d.get("title", "")).strip(),
             text=str(d.get("text", "")).strip(),
-            kind=str(d.get("kind", "")).strip().lower(),
+            agent_class=str(d.get("agent_class", "")).strip(),
             source_lines=str(d.get("source_lines", "")),
             produces=str(d.get("produces", "")).strip(),
             uses=[str(u) for u in d.get("uses") or []],
@@ -229,6 +247,8 @@ def _parse(data: dict) -> Procedure:
         description=str(data.get("description", "")),
         inputs=[str(i) for i in data.get("inputs") or []],
         phases=[Phase(str(p.get("id", f"P{i}")), str(p.get("title", f"phase {i}")),
-                      [step(s) for s in p.get("steps") or []])
+                      [step(s) for s in p.get("steps") or []], bool(p.get("direct", False)))
                 for i, p in enumerate(data["phases"], 1)],
+        orchestrator_class=str(data.get("orchestrator_class", "")).strip(),
+        group_class=str(data.get("group_class", "")).strip(),
     )

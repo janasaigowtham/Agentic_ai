@@ -6,3 +6,6 @@ __pycache__/
 # local secrets (API keys) - never commit
 .env
 .env.*
+
+# o2a_gen web UI runs (uploaded inputs and generated YAMLs)
+runs/

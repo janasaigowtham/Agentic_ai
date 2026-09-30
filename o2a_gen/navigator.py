@@ -98,8 +98,20 @@ class Catalog:
     def syntax_for(self, agent_class: str) -> str:
         """The agent-syntax sections for this class plus the general sections."""
         ids = [i for i, m in self.index.items() if m.get("kind") == "schema"
-               and (m.get("name") == agent_class or str(m.get("name", "")).startswith("general"))]
+               and (m.get("name") == agent_class
+                    or str(m.get("name", "")).startswith((f"{agent_class} (part ", "general")))]
         ids.sort(key=lambda i: self.index[i]["name"] != agent_class)  # class section first
+        return "\n\n".join(self.documents.get(i, "") for i in ids).strip()
+
+    def classes(self) -> list[str]:
+        """The agent classes the agent syntax document defines."""
+        names = [m["name"] for m in self.index.values() if m.get("kind") == "schema"]
+        return sorted({n for n in names if not n.startswith("general") and " (part " not in n})
+
+    def syntax_document(self) -> str:
+        """Every agent-syntax section, general ones first."""
+        ids = [i for i, m in self.index.items() if m.get("kind") == "schema"]
+        ids.sort(key=lambda i: not str(self.index[i]["name"]).startswith("general"))
         return "\n\n".join(self.documents.get(i, "") for i in ids).strip()
 
     def get(self, doc_id: str) -> str | None:
@@ -163,6 +175,12 @@ class CombinedCatalog:
 
     def syntax_for(self, agent_class: str) -> str:
         return next((t for c in self.parts if (t := c.syntax_for(agent_class))), "")
+
+    def classes(self) -> list[str]:
+        return sorted({c for part in self.parts for c in part.classes()})
+
+    def syntax_document(self) -> str:
+        return next((t for c in self.parts if (t := c.syntax_document())), "")
 
 
 def navigate(client: LLMClient, catalog: Catalog | CombinedCatalog, question: str, *,

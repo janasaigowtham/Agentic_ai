@@ -37,15 +37,11 @@ def node_to_dict(node: AgentNode, cfg: GenConfig) -> dict:
     if node.output_key:
         d["output_key"] = node.output_key
     for k, v in node.fields.items():
-        if k == "default_db_yaml" and isinstance(v, dict):
-            v = dump_yaml(v)  # O2A keeps the DB block as an embedded YAML string
         d[k] = v
     if node.children:
         d["sub_agents"] = [{"name": c.name} for c in node.children]
     for k, v in (cfg.agent_templates.get(node.agent_class) or {}).items():
         d.setdefault(k, v)
-    if node.agent_class == "resumable_orchestrator" and "version" not in d:
-        d["version"] = str(cfg.generation.get("version", "1.0"))
     ordered = {k: d[k] for k in FIELD_ORDER if k in d}
     ordered.update({k: v for k, v in d.items() if k not in ordered})
     return ordered

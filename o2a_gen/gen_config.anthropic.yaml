@@ -1,0 +1,42 @@
+# o2a_gen with Claude Opus 5.5 (Anthropic API) + Nemotron-3-Embed-8B (DeepInfra).
+# Used by the web UI (python -m o2a_gen.webui) and usable with the CLI.
+# Keys come from the environment only: ANTHROPIC_API_KEY, DEEPINFRA_API_KEY.
+
+llm:
+  provider: callable
+  chat: o2a_gen.providers.anthropic_provider:chat
+  embed: o2a_gen.providers.deepinfra_provider:embed
+  max_concurrency: 8
+
+models:
+  extract: claude-opus-5-5          # procedure -> steps, each with an agent_class from the syntax
+  ground: claude-opus-5-5           # writes each agent's fields from its syntax + tools + metadata
+  navigate: claude-opus-5-5         # browses the compiled skill tree
+  catalog_summary: claude-opus-5-5  # folder summaries of the skill tree
+  catalog_cards: claude-opus-5-5    # one summary card per input document
+  llm_agent: ""                     # model name written into LLM agents; empty = placeholder
+
+embedding:
+  provider: llm
+  model: nvidia/Nemotron-3-Embed-8B
+  batch_size: 32
+  dimensions: 1024
+  query_template: "Instruct: {instruction}\nQuery: {text}"
+  query_instruction: "Given a step from an operations review procedure, find the database tables, tools and reference documents needed to implement it"
+
+catalog:
+  engine: native
+  branching: 8
+  leaf_max: 12
+  min_group: 2
+  max_depth: 4
+  use_cards: true
+  partition_by_kind: true
+  workers: 8
+
+generation:
+  prefix: ""                        # agent / session-key prefix; empty = from the procedure name
+  pipeline_inputs: []               # session keys the caller supplies; empty = from the procedure
+  navigate_max_turns: 12
+  compile_procedure: true
+  agent_templates: {}

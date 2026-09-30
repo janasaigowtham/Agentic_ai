@@ -1,7 +1,8 @@
 """Structured procedure -> tree of agents (names, classes, session keys, wiring).
 
-This step is deterministic: no model calls. The agent-specific fields (SQL,
-transform, instruction, routes) are filled in afterwards by ground.py.
+This step is deterministic: no model calls. Every agent_class comes from the
+extracted procedure, which chose it from the agent syntax document. The fields of
+each agent are filled in afterwards by ground.py, from that class's syntax.
 """
 
 from __future__ import annotations
@@ -11,15 +12,6 @@ from dataclasses import dataclass, field
 
 from o2a_gen.config import GenConfig
 from o2a_gen.procedure import Procedure, Step
-
-KIND_TO_CLASS = {
-    "lookup": "database_agent",
-    "compute": "slv_transformation_agent",
-    "review": "LlmAgent",
-    "decision": "decision_router_agent",
-    "approval": "agent_gate",
-}
-
 
 @dataclass
 class AgentNode:
@@ -33,6 +25,7 @@ class AgentNode:
     available_keys: list[str] = field(default_factory=list)  # visible when this agent runs
     branch_targets: list[tuple[str, "AgentNode"]] = field(default_factory=list)  # routers
     fields: dict = field(default_factory=dict)               # filled by grounding
+    role: str = "step"                                       # step | router | group | orchestrator
 
     def walk(self):
         yield self
@@ -88,18 +81,20 @@ def build_plan(proc: Procedure, cfg: GenConfig) -> Plan:
         visible = list(visible)
         for s in steps:
             required = [step_key.get(u, u) for u in s.uses]
-            if s.kind == "decision":
+            if s.branches:
                 title = s.title if re.search(r"router$", snake(s.title)) else f"{s.title} router"
-                node = AgentNode(names.take(title), "decision_router_agent", s.text, s,
+                node = AgentNode(names.take(title), s.agent_class, s.text, s,
                                  output_key=router_key, available_keys=list(visible),
-                                 required_keys=[step_key.get(s.depends_on, s.depends_on)])
+                                 required_keys=[step_key.get(s.depends_on, s.depends_on)],
+                                 role="router")
                 produced: list[str] = []
                 branch_keys: dict[str, str] = {}
                 for b in s.branches:
                     b_nodes, b_visible = build_steps(b.steps, visible, branch_keys)
                     target = b_nodes[0] if len(b_nodes) == 1 else AgentNode(
-                        names.take(f"{b.label} process"), "SequentialAgent",
-                        f"Branch '{b.label}': {b.when}", children=b_nodes)
+                        names.take(f"{b.label} process"), group_class,
+                        f"Branch '{b.label}': {b.when}", children=b_nodes, role="group",
+                        available_keys=list(visible))
                     node.branch_targets.append((b.label, target))
                     node.children.append(target)
                     produced += [k for k in b_visible if k not in visible]
@@ -115,7 +110,7 @@ def build_plan(proc: Procedure, cfg: GenConfig) -> Plan:
                 if shared is not None:
                     shared.setdefault(phrase, key)
             step_key[s.id] = key
-            node = AgentNode(names.take(s.title), KIND_TO_CLASS[s.kind], s.text, s,
+            node = AgentNode(names.take(s.title), s.agent_class, s.text, s,
                              output_key=key, required_keys=required,
                              available_keys=list(visible))
             by_step[s.id] = node
@@ -123,16 +118,20 @@ def build_plan(proc: Procedure, cfg: GenConfig) -> Plan:
             visible.append(key)
         return nodes, visible
 
-    root = AgentNode(f"{prefix}_pipeline", "resumable_orchestrator", proc.description,
-                     output_key=f"{prefix}_final_output")
+    group_class = proc.group_class
+    root = AgentNode(f"{prefix}_pipeline", proc.orchestrator_class, proc.description,
+                     output_key=f"{prefix}_final_output", role="orchestrator",
+                     available_keys=list(inputs))
     visible = list(inputs)
     for phase in proc.phases:
+        before = list(visible)
         nodes, visible = build_steps(phase.steps, visible)
-        # A phase that is just a router or a gate sits directly under the root;
-        # any other phase is a SequentialAgent, even with one step (O2A convention).
-        if len(nodes) == 1 and nodes[0].agent_class in ("decision_router_agent", "agent_gate"):
+        # A single router, or a single step the procedure says the orchestrator runs
+        # itself, sits directly under the root; any other phase is wrapped in a group.
+        if len(nodes) == 1 and (phase.direct or nodes[0].role == "router"):
             root.children.append(nodes[0])
         elif nodes:
-            root.children.append(AgentNode(names.take(phase.title), "SequentialAgent",
-                                           phase.title, children=nodes))
+            root.children.append(AgentNode(names.take(phase.title), group_class, phase.title,
+                                           children=nodes, role="group",
+                                           available_keys=before))
     return Plan(root, by_step, inputs)

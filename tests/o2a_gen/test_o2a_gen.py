@@ -228,8 +228,8 @@ def test_generate_end_to_end_then_compare(compiled_catalog, tmp_path):
     # every agent was written with its class's agent-syntax section in the prompt
     ground_calls = [c for c in fake.calls if c["system"].startswith("You write the fields")]
     first_prompts = [c["messages"][0]["content"] for c in ground_calls]
-    db_prompt = next(p for p in first_prompts if "(database_agent)" in p)
-    assert "O2A agent syntax for database_agent:" in db_prompt
+    db_prompt = next(p for p in first_prompts if "` (database_agent)" in p)
+    assert "Agent syntax for database_agent:" in db_prompt
     assert "default_db_yaml` (string, required)" in db_prompt
 
     assert rep["errors"] == 0, rep["findings"]
@@ -356,14 +356,15 @@ def test_generate_grounds_each_step_in_its_procedure_section(compiled_catalog, t
                    catalog_dir=compiled_catalog)
     assert rep["errors"] == 0
     assert rep["procedure_tree"]["sections"] == 5
-    assert all(g["procedure_section"].startswith("procedure/") for g in rep["grounding"])
+    assert all(g["procedure_section"].startswith("procedure/")
+               for g in rep["grounding"] if g["step"])
     nav_first = [c["messages"][0]["content"] for c in fake.calls
                  if c["system"].startswith("You are looking up")]
     assert all("procedure/" in m for m in nav_first)          # procedure folder is browsable
     extract = next(c for c in fake.calls if c["system"].startswith("You convert an operations"))
     assert "Section outline" in extract["messages"][0]["content"]
     db = next(c["messages"][0]["content"] for c in fake.calls
-              if c["system"].startswith("You write the fields") and "(database_agent)" in
+              if c["system"].startswith("You write the fields") and "` (database_agent)" in
               c["messages"][0]["content"])
     assert "This step is in procedure section `procedure/02-1-pre-process`" in db
 
@@ -380,7 +381,10 @@ def test_extract_rejects_citations_outside_the_procedure():
     bad["phases"][3]["steps"][0]["source_lines"] = "22"   # the sample has 20 lines
     replies = iter([bad, PROCEDURE_JSON])
     fake = FakeLLM(default=lambda s, m: next(replies))
-    proc = extract_procedure(fake, (FIX / "procedure_sample.md").read_text(), model="m")
+    classes = ["database_agent", "slv_transformation_agent", "LlmAgent", "decision_router_agent",
+               "agent_gate", "SequentialAgent", "resumable_orchestrator"]
+    proc = extract_procedure(fake, (FIX / "procedure_sample.md").read_text(), model="m",
+                             classes=classes, syntax="(syntax)")
     assert proc.all_steps()[-1].source_lines == "20"
     assert "between 1 and 20" in fake.calls[1]["messages"][-1]["content"]
 
@@ -522,3 +526,174 @@ def test_deepinfra_embed_works_through_skill_tree_embedder(fake_deepinfra):
     arr = embed_texts(client, ["x", "y"], {"provider": "llm",
                                            "model": "nvidia/Nemotron-3-Embed-8B-BF16"})
     assert arr.shape == (2, 2)
+
+
+# ---------------------------------------------------------------- inputs of any shape
+
+def test_agent_classes_come_from_the_syntax_document(tmp_path):
+    from o2a_gen.catalog import discover_classes
+    doc = ("# Syntax\n\n## 1. Overview\n\n| agent_class | Purpose |\n|---|---|\n"
+           "| queue_agent | puts work on a queue |\n\n## 2. queue_agent syntax\n\n### Required keys\n"
+           "- queue_name\n\n## 3. Examples\n\n```yaml\nagent_class: queue_agent\n```\n")
+    assert discover_classes(doc) == {"queue_agent"}          # nothing hard-coded
+    (tmp_path / "schema").mkdir()
+    (tmp_path / "schema" / "s.md").write_text(doc)
+    docs = collect_catalog(tmp_path)
+    q = next(d for d in docs if d.name == "queue_agent")
+    assert "queue_name" in q.text                            # sub-headings stay with the class
+
+
+def test_large_structured_inputs_split_per_named_item_without_truncation(tmp_path):
+    tools = {"catalog": "x", "description": "d" * 50,
+             "tools": [{"tool_name": f"tool_{i}", "definition": {"sql": "S" * 3000}}
+                       for i in range(6)]}
+    (tmp_path / "schema").mkdir()
+    (tmp_path / "schema" / "s.md").write_text("## my_agent\n\nfields\n")
+    (tmp_path / "tools").mkdir()
+    (tmp_path / "tools" / "t.yaml").write_text(yaml.safe_dump(tools))
+    docs = [d for d in collect_catalog(tmp_path) if d.kind == "tool"]
+    assert {f"tool_{i}" for i in range(6)} <= {d.name for d in docs}
+    assert sum(d.text.count("S" * 3000) for d in docs) == 6  # nothing cut off
+    assert len({d.id for d in docs}) == len(docs)
+
+
+# ---------------------------------------------------------------- Anthropic provider (local stand-in)
+
+@pytest.fixture
+def anthropic_api(monkeypatch):
+    """A streaming stand-in for the Messages API; set .script to a list of replies."""
+    from .fake_anthropic_server import FakeAnthropic
+    script: list = []
+    fake = FakeAnthropic(lambda body: script.pop(0))
+    fake.script = script
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", fake.url)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setenv("NO_PROXY", "127.0.0.1,localhost")
+    monkeypatch.setattr("o2a_gen.providers.anthropic_provider._pause", lambda s: None)
+    yield fake
+    fake.close()
+
+
+def _ask(**kw):
+    from o2a_gen.providers.anthropic_provider import chat
+    args = dict(model="claude-opus-5-5", system=None, max_tokens=100,
+                messages=[{"role": "user", "content": "q"}])
+    args.update(kw)
+    return chat(**args)
+
+
+def test_anthropic_streams_caches_and_skips_temperature(anthropic_api):
+    anthropic_api.script.append('{"a": 1}')
+    out = _ask(system="S", temperature=0.0,
+               messages=[{"role": "user", "content": "q1"}, {"role": "assistant", "content": "a"},
+                         {"role": "user", "content": "q2"}])
+    assert out["text"] == '{"a": 1}'                        # thinking is not part of the answer
+    assert out["input_tokens"] == 150 and out["output_tokens"] >= 1
+    body = anthropic_api.bodies[0]
+    assert body["stream"] is True and "temperature" not in body
+    assert body["max_tokens"] >= 16000                       # room for thinking
+    assert body["system"][0]["cache_control"] == {"type": "ephemeral"}
+    assert "cache_control" in body["messages"][-1]["content"][0]
+    assert "cache_control" not in body["messages"][0]["content"][0]
+
+
+def test_anthropic_long_answer_is_not_cut_by_read_timeout(anthropic_api):
+    # 4 gaps of 0.3 s = 1.2 s in total, with a 0.5 s timeout: fine, since events keep arriving
+    anthropic_api.script.append({"text": "done", "slow": 0.3, "pings": 4})
+    assert _ask(timeout=0.5)["text"] == "done"
+
+
+def test_anthropic_retries_stalls_errors_and_overload(anthropic_api):
+    from o2a_gen.providers.anthropic_provider import AnthropicError
+    anthropic_api.script.extend([{"text": "x", "slow": 1.0, "pings": 1},   # stalls: read timeout
+                                 {"stream_error": "overloaded_error"},
+                                 {"status": 529, "body": "overloaded"},
+                                 "ok"])
+    assert _ask(timeout=0.4)["text"] == "ok"
+    assert len(anthropic_api.bodies) == 4
+    anthropic_api.script.extend([{"status": 529, "body": "overloaded"}] * 3)
+    with pytest.raises(AnthropicError, match="after 3 tries"):
+        _ask(retries=2)
+
+
+def test_anthropic_lowers_max_tokens_to_the_model_limit(anthropic_api):
+    anthropic_api.script.extend([
+        {"status": 400, "body": "max_tokens: 64000 > 32000, which is the maximum allowed "
+                                "number of output tokens for claude-opus-5-5"},
+        "ok"])
+    assert _ask(max_tokens=64000)["text"] == "ok"
+    assert [b["max_tokens"] for b in anthropic_api.bodies] == [64000, 32000]
+
+
+def test_anthropic_halves_max_tokens_when_the_limit_is_not_stated(anthropic_api):
+    anthropic_api.script.extend([{"status": 400, "body": "max_tokens is too large"}] * 2 + ["ok"])
+    assert _ask(max_tokens=64000)["text"] == "ok"
+    assert [b["max_tokens"] for b in anthropic_api.bodies] == [64000, 32000, 16000]
+
+
+def test_anthropic_reports_cut_off_answer(anthropic_api):
+    from o2a_gen.providers.anthropic_provider import TruncatedError
+    anthropic_api.script.append({"text": '{"partial": ', "stop_reason": "max_tokens"})
+    with pytest.raises(TruncatedError, match="cut off"):
+        _ask()
+
+
+def test_anthropic_refusal_without_fallback(anthropic_api, monkeypatch):
+    from o2a_gen.providers.anthropic_provider import RefusalError
+    monkeypatch.setenv("O2A_ANTHROPIC_FALLBACK_MODEL", "")
+    anthropic_api.script.append({"text": "", "stop_reason": "refusal"})
+    with pytest.raises(RefusalError, match="declined"):
+        _ask()
+
+
+def test_anthropic_declined_request_goes_to_fallback_model(anthropic_api, monkeypatch):
+    monkeypatch.setenv("O2A_ANTHROPIC_FALLBACK_MODEL", "backup-model")
+    anthropic_api.script.extend([{"text": "", "stop_reason": "refusal"}, "ok"])
+    assert _ask(model="main-model")["text"] == "ok"
+    assert [b["model"] for b in anthropic_api.bodies] == ["main-model", "backup-model"]
+
+
+# ---------------------------------------------------------------- web UI backend
+
+def test_webui_saves_uploads_into_catalog_layout(tmp_path, monkeypatch):
+    monkeypatch.setenv("O2A_RUNS_DIR", str(tmp_path / "runs"))
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+    monkeypatch.setenv("DEEPINFRA_API_KEY", "k")
+    import importlib
+
+    from fastapi.testclient import TestClient
+
+    import o2a_gen.webui.server as server
+    server = importlib.reload(server)
+    monkeypatch.setattr(server.threading, "Thread",
+                        lambda target, args, daemon: type("T", (), {"start": lambda s: None})())
+    c = TestClient(server.app)
+    assert c.get("/api/status").json()["anthropic_key"] is True
+    files = [("procedure", ("../proc.md", b"# P\n", "text/markdown")),
+             ("syntax", ("syntax.md", b"## a_agent\n", "text/markdown")),
+             ("tools", ("tools.yaml", b"tools: []\n", "application/yaml")),
+             ("metadata", ("meta.yaml", b"t: 1\n", "application/yaml"))]
+    r = c.post("/api/jobs", files=files, data={"prefix": "My Flow", "pipeline_inputs": "loan_number"})
+    assert r.status_code == 200, r.text
+    jd = tmp_path / "runs" / r.json()["id"]
+    assert (jd / "procedure" / "proc.md").exists()           # no path escape
+    assert (jd / "catalog_src" / "schema" / "syntax.md").exists()
+    assert (jd / "catalog_src" / "tools" / "tools.yaml").exists()
+    assert (jd / "catalog_src" / "metadata" / "meta.yaml").exists()
+    cfg = yaml.safe_load((jd / "config.yaml").read_text())
+    assert cfg["generation"]["prefix"] == "my_flow"
+    assert cfg["generation"]["pipeline_inputs"] == ["loan_number"]
+    assert "k" not in (jd / "config.yaml").read_text().split()   # keys never written
+    r = c.post("/api/jobs", files=files[:1], data={})
+    assert r.status_code == 422                              # required inputs missing
+
+
+# ---------------------------------------------------------------- end-to-end smoke (no real APIs)
+
+def test_ui_end_to_end_smoke(tmp_path):
+    """Real UI server + streaming API stand-ins + scripted model, on the fixture inputs."""
+    from .smoke_ui import FIX, run
+    fails = run(FIX.parent / "procedure_sample.md", sorted((FIX / "tools").glob("*")),
+                sorted((FIX / "metadata").glob("*")), sorted((FIX / "schema").glob("*")),
+                tmp_path / "runs", timeout=180)
+    assert not fails, fails

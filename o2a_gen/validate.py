@@ -14,8 +14,11 @@ import yaml
 
 from o2a_gen.refs import double_brace_refs, is_env_ref, single_brace_refs, sql_params
 
-KNOWN_CLASSES = {"LlmAgent", "database_agent", "slv_transformation_agent", "transformation_agent",
-                 "decision_router_agent", "SequentialAgent", "agent_gate", "resumable_orchestrator"}
+# Fallback only: when a catalog is given, the classes come from its agent syntax document.
+KNOWN_CLASSES = {"LlmAgent", "database_agent", "rest_api_agent", "slv_transformation_agent",
+                 "transformation_agent", "decision_router_agent", "SequentialAgent",
+                 "ParallelAgent", "LoopAgent", "FailFastLoopAgent", "agent_gate",
+                 "resumable_orchestrator"}
 CONTAINERS = {"SequentialAgent", "resumable_orchestrator"}
 
 

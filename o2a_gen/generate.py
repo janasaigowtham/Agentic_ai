@@ -43,6 +43,9 @@ def generate(procedure_path: Path, out_dir: Path, cfg: GenConfig, client: LLMCli
     old = list(out_dir.glob("*.yaml")) if out_dir.exists() else []
     if old and not overwrite:
         raise FileExistsError(f"{out_dir} already has {len(old)} YAML files; use --overwrite")
+    if catalog is None:
+        raise ValueError("a compiled catalog is required: it holds the agent syntax, tools and "
+                         "metadata the workflow is built from")
     for p in old:
         p.unlink()
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -62,8 +65,9 @@ def generate(procedure_path: Path, out_dir: Path, cfg: GenConfig, client: LLMCli
         print(f"      {sum(1 for _ in proc_tree.root.walk()) - 1} sections, "
               f"{len(proc_tree.docs)} documents -> {proc_dir}")
 
-    print("[2/6] Extracting steps ...")
+    print("[2/6] Extracting steps (one long answer; can take several minutes) ...")
     proc = extract_procedure(client, text, model=cfg.model("extract"),
+                             classes=catalog.classes(), syntax=catalog.syntax_document(),
                              source=procedure_path.name, outline=outline)
     steps = proc.all_steps()
     print(f"      {len(proc.phases)} phases, {len(steps)} steps")
@@ -72,8 +76,9 @@ def generate(procedure_path: Path, out_dir: Path, cfg: GenConfig, client: LLMCli
     plan = build_plan(proc, cfg)
     print(f"      {len(plan.nodes())} agents")
 
-    print(f"[4/6] Grounding each step {'in the procedure + catalog' if browse else '(no catalog)'} ...")
-    groundings = ground_plan(client, plan, cfg, browse, max_workers=workers, proc_tree=proc_tree)
+    print("[4/6] Writing each agent's fields from its syntax, tools and metadata ...")
+    groundings = ground_plan(client, plan, cfg, browse, max_workers=workers, proc_tree=proc_tree,
+                             procedure_text=text)
 
     print(f"[5/6] Writing YAMLs to {out_dir} ...")
     write_plan(plan, cfg, out_dir, procedure_path.name)
@@ -90,7 +95,8 @@ def generate(procedure_path: Path, out_dir: Path, cfg: GenConfig, client: LLMCli
         "pipeline_inputs": plan.inputs,
         "agents": len(plan.nodes()),
         "coverage": [
-            {"step": s.id, "title": s.title, "lines": s.source_lines, "kind": s.kind,
+            {"step": s.id, "title": s.title, "lines": s.source_lines,
+             "agent_class": s.agent_class,
              "agent": plan.by_step[s.id].name if s.id in plan.by_step else None}
             for s in steps
         ],
