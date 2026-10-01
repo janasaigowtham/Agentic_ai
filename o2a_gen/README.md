@@ -42,14 +42,22 @@ a playbook is given, generation runs `harness.py` instead of the step-by-step ge
 | Data map | its data rules to the tools and metadata | `workflow_data_map.json` / `.md` |
 | Orchestrate | its roles and orchestration rules | `workflow_plan.json` / `.md` |
 | Write | one writer per agent: plan entry, class syntax, sources | `workflow/*.yaml` |
-| Review | code checks + a fresh model review; blocking problems go back to the writer | `workflow_review.json`, `workflow_placeholders.md` |
+| Review | code checks + a fresh model review; plan problems re-run planning, agent problems go back to that agent's writer | `workflow_review.json`, `workflow_placeholders.md` |
 
 The playbook and the agent syntax are the system prompt of every call (cached). Between
 stages, code checks what came back and sends problems back to the model: classes must be
 in the syntax, cited procedure lines must exist, every mapped tool and field must appear
 in the tools or metadata, every check in the flow must be covered by an agent, routes and
 sub-agents must exist, and every key an agent reads must be written by some agent or be a
-pipeline input. Nothing in the code is specific to a procedure, tool or agent class. The
+pipeline input. The recipe records which input wins when inputs disagree (the playbook's
+precedence rules); every planned agent fills exactly one recipe role, no role is built more
+often than the playbook allows, and two agents may write the same key only on exclusive
+branches, inside a container that reports its child's key, or where the playbook shares it.
+Each writer gets the full definition of every tool or metadata entry its plan entry names
+(or, if none match, the full tools and metadata). Notes in the YAML header are always valid
+comments, and every written file is parsed. Gaps in the inputs themselves (for example
+undocumented function arguments) are listed once at the top of `placeholders.md`. Nothing
+in the code is specific to a procedure, tool or agent class. The
 build notes (`flow.md`, `data_map.md`, `plan.md`, `placeholders.md`) appear in the web UI
 under the stats, and in the zip.
 

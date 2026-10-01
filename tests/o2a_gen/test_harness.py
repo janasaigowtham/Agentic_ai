@@ -55,8 +55,26 @@ DATAMAP = {"fields": [
     "external": [{"system": "ICMP", "tools": ["fetch_loan_document"], "status": "available"}]}
 
 
+RECIPE = {
+    "roles": [
+        {"role": "qa_pipeline", "agent_class": "resumable_orchestrator", "when": "always",
+         "count": "one per workflow"},
+        {"role": "pre_process", "agent_class": "SequentialAgent", "when": "always",
+         "count": "one per workflow"},
+        {"role": "data_fetcher", "agent_class": "LlmAgent or database_agent", "when": "always",
+         "count": "one per workflow"},
+        {"role": "qa_q<NN>", "agent_class": "LlmAgent", "when": "always",
+         "count": "one per attribute", "output_key": "<prefix>_answer_q<NN>"},
+        {"role": "verdict_synthesizer", "agent_class": "LlmAgent", "when": "always",
+         "count": "one per workflow"}],
+    "precedence": ["the procedure wins on business rules"], "shared_keys": [],
+    "orchestration": ["pre_process then verdict"], "logic_rules": ["one qa_q per attribute"],
+    "data_rules": ["exact column names"], "naming_rules": [], "checks": ["one root"]}
+
+
 def _agent(name, cls, **kw):
-    return {"name": name, "agent_class": cls, "role": name.replace("pmi_ddn_", ""),
+    return {"name": name, "agent_class": cls,
+            "role": name.replace("pmi_ddn_", "").replace("qa_q01", "qa_q<NN>"),
             "purpose": f"{name} does its job", "input_keys": [], "output_key": "",
             "sub_agents": [], "routes": [], "covers": [], "sources": [], **kw}
 
@@ -94,7 +112,8 @@ def _writer(system, messages):
         return {"fields": {"instruction": f"Apply the rules to {{{key}}}."
                            + (" Answer NEEDS_HUMAN when the ICMP letter is missing." if fixed else ""),
                            "model": ""},
-                "gaps": ["model: no model name given"]}
+                "gaps": ["model: no model name given\n- line two of the note\nnot: a key"],
+                "input_gaps": ["the syntax does not name $fn arguments"]}
     return {"fields": {}, "gaps": []}
 
 
@@ -115,12 +134,7 @@ class Script:
         self.prompts.setdefault(task, []).append(messages[-1]["content"])
         assert "PLAYBOOK" in system and "qa_q<NN>" in system      # playbook in every call
         if task == "recipe":
-            return {"roles": [{"role": "qa_pipeline", "agent_class": "resumable_orchestrator",
-                               "when": "always"},
-                              {"role": "data_fetcher", "agent_class": "LlmAgent or database_agent",
-                               "when": "always"}],
-                    "orchestration": ["pre_process then verdict"], "logic_rules": ["one qa_q per attribute"],
-                    "data_rules": ["exact column names"], "naming_rules": [], "checks": ["one root"]}
+            return RECIPE
         if task == "logic":
             return FLOW
         if task == "datamap":
@@ -133,9 +147,13 @@ class Script:
             self.reviews += 1
             if self.reviews == 1:
                 return {"findings": [{"agent": "pmi_ddn_qa_q01", "severity": "blocking",
+                                      "level": "agent",
                                       "problem": "missing ICMP letter is not handled",
                                       "evidence": "playbook: Missing values are NEEDS_HUMAN",
-                                      "fix": "answer NEEDS_HUMAN when the ICMP letter is missing"}]}
+                                      "fix": "answer NEEDS_HUMAN when the ICMP letter is missing"},
+                                     {"agent": "pmi_ddn_qa_pipeline", "severity": "blocking",
+                                      "level": "plan", "problem": "verdict runs too early",
+                                      "evidence": "playbook order", "fix": "keep order"}]}
             return {"findings": [{"agent": "*", "severity": "minor", "problem": "names are long",
                                   "evidence": "", "fix": ""}]}
         raise AssertionError(task)
@@ -163,7 +181,7 @@ def test_playbook_run_builds_checks_reviews_and_fixes(playbook_catalog, tmp_path
     assert sorted(p.stem for p in out.glob("*.yaml")) == sorted(a["name"] for a in PLAN["agents"])
     # wrong answers were sent back with the code check's reason, then corrected
     assert len(script.prompts["datamap"]) == 2 and "LETTER_EFFECTIVE_DT" in script.prompts["datamap"][1]
-    assert len(script.prompts["orchestrate"]) == 2 and "Q1:2" in script.prompts["orchestrate"][1]
+    assert "Q1:2" in script.prompts["orchestrate"][1]          # retry after the coverage check
     # the blocking review finding was sent to that agent's writer, and the fix landed
     q = yaml.safe_load((out / "pmi_ddn_qa_q01.yaml").read_text())
     assert "NEEDS_HUMAN" in q["instruction"] and q["input_keys"] == ["pmi_ddn_data"]
@@ -179,6 +197,18 @@ def test_playbook_run_builds_checks_reviews_and_fixes(playbook_catalog, tmp_path
                  "placeholders.md", "report.json"):
         assert (out.parent / f"workflow_{note}").exists(), note
     assert rep["errors"] == 0 and rep["blocking"] == 0
+    # plan-level finding re-ran planning with the previous plan and the problem
+    assert len(script.prompts["orchestrate"]) == 3 and rep["replans"] == 1
+    assert "Your previous plan" in script.prompts["orchestrate"][2]
+    assert "verdict runs too early" in script.prompts["orchestrate"][2]
+    # multi-line notes stay comments, so every file parses
+    for p in out.glob("*.yaml"):
+        yaml.safe_load(p.read_text())
+    assert "#   - line two of the note" in text
+    # input gaps are reported once, not per agent
+    assert rep["input_gaps"] == ["the syntax does not name $fn arguments"]
+    notes = (out.parent / "workflow_placeholders.md").read_text()
+    assert notes.count("the syntax does not name $fn arguments") == 1
     assert {c["check"]: c["agent"] for c in rep["coverage"]}["Q1:3"] == "pmi_ddn_qa_q01"
 
 
@@ -239,3 +269,68 @@ def test_webui_takes_a_playbook_and_shows_its_stages_and_notes(tmp_path, monkeyp
     (jd / "out" / "workflow_flow.md").write_text("# Q1")
     assert c.get(f"/api/jobs/{jid}").json()["notes"] == ["flow.md"]
     assert c.get(f"/api/jobs/{jid}/files/flow.md").text == "# Q1"
+
+
+def test_sources_resolve_from_descriptive_plan_text(playbook_catalog):
+    from o2a_gen.harness import _find_sources
+    from o2a_gen.navigator import Catalog
+    cat = Catalog(playbook_catalog)
+    text, ids = _find_sources(cat, ["tools[fetch_loan_document] (POST, auth bearer)",
+                                    "metadata MSP_LOAN_MASTER7_CS columns"])
+    names = {cat.index[d]["name"] for d in ids}
+    assert "fetch_loan_document" in names and "MSP_LOAN_MASTER7_CS" in names
+    assert "document_type" in text and "LETTER_EFFECTIVE_DATE" in text
+    assert _find_sources(cat, ["nothing like this"]) == ("", [])
+
+
+def test_runtime_values_are_not_session_keys_and_sql_binds_are():
+    from o2a_gen.harness import check_fields
+    agent = {"agent_class": "rest_api_agent", "output_key": "out", "input_keys": []}
+    check_fields(agent, {"api_config_details": "url: ${ENV:ICMP_URL}\nheaders:\n"
+                         "  WF-senderMessageId: ${UUID}\n  ts: ${ISO_TIMESTAMP}\n"},
+                 "api_config_details", [])
+    db = {"agent_class": "database_agent", "output_key": "rows", "input_keys": []}
+    with pytest.raises(ValueError, match="loan_number"):
+        check_fields(db, {"default_db_yaml": "type: oracle\nconnection:\n  url: ${ENV:DB}\n"
+                          "query: SELECT 1 FROM t WHERE ln = :loan_number\n"},
+                     "default_db_yaml", [])
+
+
+def test_input_keys_follow_the_class_syntax():
+    from o2a_gen.harness import _key_fields
+    a = {"agent_class": "rest_api_agent", "input_keys": ["body", "batch_id"]}
+    keys, note = _key_fields(a, {}, "Optional keys\n- input_key\n")
+    assert keys == {"input_key": "body"} and "batch_id" in note
+    assert _key_fields(a, {}, "- input_keys: list")[0] == {"input_keys": ["body", "batch_id"]}
+    assert _key_fields(a, {"input_key": "x"}, "- input_key")[0] == {}
+    assert _key_fields({"agent_class": "agent_gate", "input_keys": []}, {}, "")[0] == {}
+
+
+def test_plan_check_catches_duplicate_roles_and_writers():
+    classes = {"resumable_orchestrator", "SequentialAgent", "database_agent", "LlmAgent",
+               "decision_router_agent"}
+    dup = json.loads(json.dumps(PLAN))
+    dup["agents"][1]["sub_agents"].append("pmi_ddn_qa_q01_again")
+    dup["agents"].append(_agent("pmi_ddn_qa_q01_again", "LlmAgent", role="data_fetcher",
+                                output_key="pmi_ddn_data", covers=["Q1:2"]))
+    with pytest.raises(ValueError) as e:
+        check_plan(dup, classes, FLOW, ["loan_number"], RECIPE)
+    assert "filled 2 times" in str(e.value) and "both write 'pmi_ddn_data'" in str(e.value)
+    # a first-pass and a final evaluator may share the answer key the playbook gives both
+    shared = json.loads(json.dumps(PLAN))
+    recipe = json.loads(json.dumps(RECIPE))
+    recipe["roles"].append({"role": "qa_q<NN>_final", "agent_class": "LlmAgent",
+                            "count": "one per attribute", "output_key": "<prefix>_answer_q<NN>"})
+    shared["agents"][0]["sub_agents"].insert(1, "pmi_ddn_qa_q01_final")
+    shared["agents"].append(_agent("pmi_ddn_qa_q01_final", "LlmAgent", role="qa_q<NN>_final",
+                                   input_keys=["pmi_ddn_data"], output_key="pmi_ddn_answer_q01"))
+    check_plan(shared, classes, FLOW, ["loan_number"], recipe)
+    # a container may report its own child's key; unknown roles are rejected
+    box = json.loads(json.dumps(PLAN))
+    box["agents"][1]["output_key"] = "pmi_ddn_answer_q01"
+    check_plan(box, classes, FLOW, ["loan_number"], RECIPE)
+    box["agents"][2]["role"] = "made_up_role"
+    with pytest.raises(ValueError, match="not a recipe role"):
+        check_plan(box, classes, FLOW, ["loan_number"], RECIPE)
+    box["agents"][2]["role"] = "tool: escrow fetch step"
+    check_plan(box, classes, FLOW, ["loan_number"], RECIPE)

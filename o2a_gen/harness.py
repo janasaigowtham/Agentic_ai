@@ -29,6 +29,8 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+import yaml
+
 from o2a_gen.config import GenConfig
 from o2a_gen.emit import dump_yaml
 from o2a_gen.llm import LLMClient, complete_json
@@ -74,8 +76,12 @@ Return:
       "agent_class": "class from the syntax (or several, joined by ' or ')",
       "when": "always | the condition under which the playbook adds it",
       "purpose": "what it does",
-      "output_key": "the output key pattern the playbook gives, or empty"}}
+      "output_key": "the output key pattern the playbook gives, or empty",
+      "count": "one per workflow | one per attribute | as needed (how many the playbook allows)"}}
   ],
+  "precedence": ["which input wins when inputs disagree (on business rules, package shape,
+                  names and integration values), as the playbook states it"],
+  "shared_keys": ["session keys the playbook says several agents may write"],
   "orchestration": ["rules for ordering and nesting agents, branches, gates"],
   "logic_rules": ["rules for how the review logic is checked and by which agents"],
   "data_rules": ["rules for mapping data from tools and metadata"],
@@ -159,6 +165,17 @@ map: decide every agent of the workflow. Use agent and tool names from the TOOLS
 METADATA where they name them; otherwise follow the playbook's naming rules with the
 prefix "{prefix}". Every check in the flow must be covered by at least one agent.
 
+Rules for the plan:
+- Every agent fills exactly one recipe role: copy the role name as the recipe writes it.
+  A step that only the TOOLS or METADATA define (not a playbook role) uses
+  "tool: <step name as the tools/metadata write it>".
+- When inputs disagree, follow the recipe's precedence rules. When the TOOLS or METADATA
+  name an agent or stage for a role, use that name for the role; never add a second agent
+  for the same role.
+- Respect each role's count (one per workflow / one per attribute).
+- Two agents may write the same session key only if they sit on different branches of the
+  same router (only one of them runs), or the key is one of the recipe's shared keys.
+{feedback}
 Agent classes the syntax defines: {classes}
 Pipeline inputs (supplied by the caller): {inputs}
 
@@ -184,7 +201,7 @@ Return:
   "root": "name of the top-level agent",
   "agents": [
     {{"name": "agent name", "agent_class": "one class from the syntax",
-      "role": "the playbook role it fills", "purpose": "one sentence",
+      "role": "the recipe role it fills (or 'tool: <step>')", "purpose": "one sentence",
       "input_keys": ["session keys it reads"], "output_key": "session key it writes, or empty",
       "sub_agents": ["children in execution order (containers and routers)"],
       "routes": [{{"target": "child name", "when": "condition in words"}}],
@@ -230,7 +247,12 @@ Return:
   "fields": {{every field this agent needs per its syntax, except {plan_fields}, which the
              plan sets}},
   "description": "one sentence",
-  "gaps": ["each value the inputs did not provide, and where it belongs"]
+  "gaps": ["each value for THIS agent that the inputs did not provide, and where it belongs"],
+  "input_gaps": ["gaps in the input documents themselves that affect many agents, e.g. the
+                  syntax does not document a function's argument names"],
+  "plan_issues": ["problems with the plan that you cannot fix in this agent's fields
+                   (wrong children, order, keys, duplicate roles); leave the fields as the
+                   plan says and report them here"]
 }}"""
 
 REVIEW_TASK = """TASK: review
@@ -261,6 +283,8 @@ Return:
   "findings": [
     {{"agent": "agent name (or '*' for the whole workflow)",
       "severity": "blocking | minor",
+      "level": "plan (which agents exist, their classes, children, order, routes targets,
+                input/output keys) | agent (the fields inside one agent's YAML)",
       "problem": "what is wrong", "evidence": "playbook rule / flow check / syntax rule",
       "fix": "exactly what to change"}}
   ]
@@ -288,6 +312,8 @@ class AgentResult:
     gaps: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     sources: list[str] = field(default_factory=list)
+    input_gaps: list[str] = field(default_factory=list)
+    plan_issues: list[str] = field(default_factory=list)
 
 
 # --------------------------------------------------------------------------- inputs
@@ -409,7 +435,42 @@ def check_datamap(data, flow: dict, sources_text: str) -> None:
         raise ValueError("; ".join(problems[:12]))
 
 
-def check_plan(data, classes: set[str], flow: dict, inputs: list[str]) -> None:
+def _norm_role(r) -> str:
+    return re.sub(r"\s+", " ", str(r or "")).strip().strip("`").lower()
+
+
+def _branches(agents: list[dict], root: str) -> dict[str, dict[str, str]]:
+    """agent -> {router name: the child (branch) of that router it sits under}. An agent
+    with routes is a router; its children are mutually exclusive branches."""
+    return _walk_tree(agents, root)[0]
+
+
+def _ancestors(agents: list[dict], root: str) -> dict[str, set[str]]:
+    """agent -> the containers above it."""
+    return _walk_tree(agents, root)[1]
+
+
+def _walk_tree(agents: list[dict], root: str):
+    by = {a.get("name"): a for a in agents}
+    branches: dict[str, dict[str, str]] = {}
+    above: dict[str, set[str]] = {}
+
+    def walk(n, path, up, seen):
+        if n in seen or n not in by:
+            return
+        branches.setdefault(n, dict(path))
+        above.setdefault(n, set(up))
+        a = by[n]
+        for c in a.get("sub_agents") or []:
+            sub = {**path, n: str(c)} if a.get("routes") else path
+            walk(str(c), sub, up | {n}, seen | {n})
+
+    walk(root, {}, set(), set())
+    return branches, above
+
+
+def check_plan(data, classes: set[str], flow: dict, inputs: list[str],
+               recipe: dict | None = None) -> None:
     if not isinstance(data, dict) or not isinstance(data.get("agents"), list) or not data["agents"]:
         raise ValueError('expected an object with a non-empty "agents" list')
     agents = data["agents"]
@@ -447,6 +508,9 @@ def check_plan(data, classes: set[str], flow: dict, inputs: list[str]) -> None:
         problems.append(f"root {data.get('root')!r} is not a planned agent")
     elif roots != [data["root"]]:
         problems.append(f"exactly one agent may be unreferenced (the root); found {roots}")
+    if recipe:
+        problems += _role_problems(agents, recipe, flow)
+        problems += _writer_problems(agents, data.get("root"), recipe)
     covered = {str(c) for a in agents for c in a.get("covers") or []}
     missing = [f"{a['id']}:{c['id']}" for a in flow.get("attributes", [])
                for c in a.get("checks", []) if f"{a['id']}:{c['id']}" not in covered]
@@ -454,6 +518,66 @@ def check_plan(data, classes: set[str], flow: dict, inputs: list[str]) -> None:
         problems.append(f"checks not covered by any agent: {missing[:10]}")
     if problems:
         raise ValueError("; ".join(problems[:14]))
+
+
+def _role_problems(agents: list[dict], recipe: dict, flow: dict) -> list[str]:
+    roles = {_norm_role(r.get("role")): r for r in recipe.get("roles") or [] if isinstance(r, dict)}
+    n_attr = max(1, len(flow.get("attributes") or []))
+    problems, count = [], {}
+    for a in agents:
+        role = _norm_role(a.get("role"))
+        if not role:
+            problems.append(f"{a.get('name')}: no role; copy a recipe role name or use "
+                            "'tool: <step>'")
+        elif role not in roles and not role.startswith("tool:"):
+            problems.append(f"{a.get('name')}: role {a.get('role')!r} is not a recipe role "
+                            f"({sorted(roles)}) nor 'tool: <step>'")
+        count.setdefault(role, []).append(a.get("name"))
+    for role, names in count.items():
+        limit = str((roles.get(role) or {}).get("count", "")).lower()
+        allowed = 1 if "workflow" in limit else n_attr if "attribute" in limit else None
+        if allowed is not None and len(names) > allowed:
+            problems.append(f"role {role!r} is filled {len(names)} times ({names}); the playbook "
+                            f"allows {limit}")
+    return problems
+
+
+def _pattern(p: str) -> re.Pattern:
+    """A key pattern such as '<prefix>_answer_q<NN>' as a regex; placeholders match a name."""
+    parts = re.split(r"<[^>]+>", str(p).strip().strip("`"))
+    return re.compile("^" + "[A-Za-z0-9_]+".join(re.escape(x) for x in parts) + "$")
+
+
+def _shared_patterns(recipe: dict) -> list[re.Pattern]:
+    """Keys several agents may write: the recipe's shared keys, plus any output-key pattern
+    the playbook gives to more than one role (e.g. a first-pass and a final evaluator)."""
+    pats = [str(k) for k in recipe.get("shared_keys") or [] if str(k).strip()]
+    outs = [str(r.get("output_key") or "").strip() for r in recipe.get("roles") or []
+            if isinstance(r, dict)]
+    pats += [o for o in set(outs) if o and outs.count(o) > 1]
+    return [_pattern(x) for x in pats]
+
+
+def _writer_problems(agents: list[dict], root, recipe: dict) -> list[str]:
+    shared = _shared_patterns(recipe)
+    branch_of = _branches(agents, str(root))
+    above = _ancestors(agents, str(root))
+    writers: dict[str, list[str]] = {}
+    for a in agents:
+        k = a.get("output_key")
+        if k and not a.get("routes") and not any(p.match(str(k)) for p in shared):
+            writers.setdefault(str(k), []).append(a.get("name"))
+    problems = []
+    for key, ws in writers.items():
+        for i, x in enumerate(ws):
+            for y in ws[i + 1:]:
+                if x in above.get(y, set()) or y in above.get(x, set()):
+                    continue      # a container reporting its own child's key
+                px, py = branch_of.get(x, {}), branch_of.get(y, {})
+                if not any(r in py and px[r] != py[r] for r in px):
+                    problems.append(f"{x} and {y} both write {key!r} and can both run; give one "
+                                    "of them another key, or drop the duplicate")
+    return problems[:6]
 
 
 # --------------------------------------------------------------------------- plan helpers
@@ -487,24 +611,34 @@ def available_keys(plan: dict, name: str, inputs: list[str]) -> list[str]:
     return keys
 
 
-def _find_sources(catalog, names: list[str], limit: int = 6) -> tuple[str, list[str]]:
-    """Catalog documents (tools, metadata, playbook) that define the named sources."""
+_IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_.]{3,}")
+
+
+def _find_sources(catalog, refs: list[str], limit_chars: int = 120000) -> tuple[str, list[str]]:
+    """Catalog documents (tools, metadata) that define what an agent's plan entry names.
+
+    ``refs`` are free text (plan ``sources``, the agent's name and role): every identifier
+    in them that names a catalog document, or a ``tool_name``/``name`` entry inside one,
+    pulls in that document and all its parts (e.g. a tool's overview and its definition)."""
+    names: dict[str, list[str]] = {}
+    for did, meta in catalog.index.items():
+        if meta.get("kind") in ("tool", "metadata"):
+            head = re.split(r"\s+[/(]", str(meta.get("name", "")))[0].strip().lower()
+            names.setdefault(head, []).append(did)
+    tokens = list(dict.fromkeys(t.lower().strip(".") for r in refs for t in _IDENT.findall(str(r))))
     found: list[str] = []
-    for nm in names:
-        nm_l = str(nm).lower().strip()
-        if not nm_l:
-            continue
-        exact = [d for d, m in catalog.index.items() if nm_l == str(m.get("name", "")).lower()]
-        named = [d for d, m in catalog.index.items() if nm_l in str(m.get("name", "")).lower()]
-        texty = [d for d, t in catalog.documents.items()
-                 if catalog.index.get(d, {}).get("kind") in ("tool", "metadata")
-                 and nm_l in t.lower()]
-        picked = [d for d in dict.fromkeys(exact + named + texty) if d not in found][:3]
-        found += picked
-    found = found[:limit * 3]
+    for t in tokens:
+        hits = names.get(t, [])
+        if not hits:
+            pat = re.compile(rf"(?m)^\s*-?\s*(tool_name|name|id):\s*['\"]?{re.escape(t)}['\"]?\s*$",
+                             re.I)
+            hits = [d for d, txt in catalog.documents.items()
+                    if catalog.index.get(d, {}).get("kind") in ("tool", "metadata") and pat.search(txt)]
+        found += [d for d in hits if d not in found]
     blocks = [f"[{catalog.index.get(d, {}).get('kind')}] {catalog.index.get(d, {}).get('name')}"
               f"\n{catalog.get(d) or ''}" for d in found]
-    return "\n\n".join(blocks)[:60000] or "(none found)", found
+    text = "\n\n".join(blocks)
+    return (text[:limit_chars] if text else ""), found
 
 
 def _checks_for(flow: dict, covers: list[str]) -> str:
@@ -538,6 +672,35 @@ def _strings(v):
             yield from _strings(x)
 
 
+_RUNTIME = re.compile(r"\$\{[^}]*\}")      # ${ENV:VAR}, ${UUID}: filled by the runtime, not state
+
+
+def _sql_texts(fields) -> list[str]:
+    """SQL queries in the fields: a ``query`` value, also inside embedded YAML strings."""
+    out = []
+
+    def visit(v):
+        if isinstance(v, dict):
+            for k, x in v.items():
+                if k == "query" and isinstance(x, str):
+                    out.append(x)
+                else:
+                    visit(x)
+        elif isinstance(v, list):
+            for x in v:
+                visit(x)
+        elif isinstance(v, str) and "\n" in v:
+            try:
+                parsed = yaml.safe_load(v)
+            except yaml.YAMLError:
+                return
+            if isinstance(parsed, (dict, list)):
+                visit(parsed)
+
+    visit(fields)
+    return out
+
+
 def check_fields(agent: dict, fields: dict, class_syntax: str, available: list[str]) -> None:
     problems = []
     if class_syntax:
@@ -545,8 +708,12 @@ def check_fields(agent: dict, fields: dict, class_syntax: str, available: list[s
                    and not re.search(rf"\b{re.escape(str(k))}\b", class_syntax)]
         if unknown:
             problems.append(f"fields {unknown} are not in the syntax for {agent['agent_class']}")
-    refs = double_brace_refs(fields) | {p for s in _strings(fields) for p in sql_params(s)}
-    refs |= {r for s in _strings(fields) for r in single_brace_refs(s)}
+    clean = _RUNTIME.sub("", json.dumps(fields))   # runtime values are not session keys
+    refs = double_brace_refs(json.loads(clean))
+    refs |= {p for q in _sql_texts(fields) for p in sql_params(_RUNTIME.sub("", q))}
+    instruction = fields.get("instruction")
+    if isinstance(instruction, str):               # {key} placeholders live in instructions
+        refs |= single_brace_refs(_RUNTIME.sub("", instruction))
     missing = refs - set(available) - {agent.get("output_key")} - set(agent.get("input_keys") or [])
     if missing:
         problems.append(f"references {sorted(missing)}, which are not available session keys "
@@ -558,6 +725,35 @@ def check_fields(agent: dict, fields: dict, class_syntax: str, available: list[s
             problems.append(f"route target_agent {t!r} is not one of its sub_agents {sorted(subs)}")
     if problems:
         raise ValueError("; ".join(problems))
+
+
+def _strs(v) -> list[str]:
+    v = v if isinstance(v, list) else [v] if v else []
+    return [str(x) for x in v if str(x).strip()]
+
+
+def _comment(label: str, text) -> list[str]:
+    """A note as YAML comment lines: every line of a multi-line note gets its own '#'."""
+    lines = [ln.rstrip() for ln in str(text or "").splitlines() if ln.strip()]
+    if not lines:
+        return []
+    return [f"# {label}: {lines[0]}"] + [f"#   {ln}" for ln in lines[1:]]
+
+
+def _key_fields(agent: dict, fields: dict, class_syntax: str) -> tuple[dict, str]:
+    """The plan's input keys in the form the class's syntax defines: ``input_keys`` (list)
+    where the syntax has it, else ``input_key`` (one key); nothing if it has neither."""
+    keys = [str(k) for k in agent.get("input_keys") or []]
+    if not keys or "input_key" in fields or "input_keys" in fields:
+        return {}, ""
+    if not class_syntax or re.search(r"\binput_keys\b", class_syntax):
+        return {"input_keys": keys}, ""
+    if re.search(r"\binput_key\b", class_syntax):
+        note = (f"{agent['agent_class']} takes one input_key; the agent also reads "
+                f"{keys[1:]} through its fields") if len(keys) > 1 else ""
+        return {"input_key": keys[0]}, note
+    return {}, (f"{agent['agent_class']} has no input_key(s) in the syntax; it reads {keys} "
+                "through its fields")
 
 
 # --------------------------------------------------------------------------- rendering
@@ -674,13 +870,19 @@ class Harness:
         self._save("data_map", dm, datamap_md(dm))
         return dm
 
-    def orchestrate(self, recipe: dict, flow: dict, dm: dict) -> dict:
+    def orchestrate(self, recipe: dict, flow: dict, dm: dict, previous: dict | None = None,
+                    problems: str = "") -> dict:
+        feedback = ""
+        if previous is not None:
+            feedback = (f"\nYour previous plan:\n{self._j(previous)}\n\nProblems the review found in "
+                        f"the workflow built from it (fix them all, change nothing else):\n{problems}\n")
         plan = self._ask("orchestrate", ORCHESTRATE_TASK.format(
             prefix=self.cfg.prefix or "(from the procedure / tools)",
             classes=", ".join(sorted(self.classes)), inputs=self.pipeline_inputs or "(decide)",
             recipe=self._j(recipe), flow=self._j(flow), datamap=self._j(dm),
-            tools=self.inp.tools, metadata=self.inp.metadata),
-            lambda d: check_plan(d, self.classes, flow, self.pipeline_inputs), max_tokens=64000)
+            tools=self.inp.tools, metadata=self.inp.metadata, feedback=feedback),
+            lambda d: check_plan(d, self.classes, flow, self.pipeline_inputs, recipe),
+            max_tokens=64000)
         if not self.pipeline_inputs:
             self.pipeline_inputs = list(plan.get("pipeline_inputs") or [])
         self._save("plan", plan, plan_md(plan))
@@ -691,7 +893,11 @@ class Harness:
         cls = agent["agent_class"]
         class_syntax = self.catalog.syntax_for(cls)
         available = available_keys(plan, agent["name"], self.pipeline_inputs)
-        srcs, src_ids = _find_sources(self.catalog, list(agent.get("sources") or []))
+        srcs, src_ids = _find_sources(self.catalog, list(agent.get("sources") or [])
+                                      + [agent["name"], str(agent.get("role", ""))])
+        if not src_ids:
+            srcs = ("No catalog document matched this agent's sources, so here are the full "
+                    f"inputs.\n\nTOOLS:\n{self.inp.tools}\n\nMETADATA:\n{self.inp.metadata}")
         summary = [{"name": a["name"], "agent_class": a["agent_class"],
                     "output_key": a.get("output_key", "")} for a in plan["agents"]]
         prompt = WRITE_TASK.format(
@@ -717,21 +923,24 @@ class Harness:
             return res
         res.fields = {k: v for k, v in d["fields"].items() if k not in PLAN_FIELDS}
         res.description = str(d.get("description") or agent.get("purpose") or "")
-        g = d.get("gaps") or []
-        res.gaps = [str(x) for x in (g if isinstance(g, list) else [g]) if str(x).strip()]
+        res.gaps = _strs(d.get("gaps"))
+        res.input_gaps = _strs(d.get("input_gaps"))
+        res.plan_issues = _strs(d.get("plan_issues"))
         return res
 
-    def emit(self, plan: dict, results: dict[str, AgentResult]) -> None:
+    def emit(self, plan: dict, results: dict[str, AgentResult]) -> list[str]:
+        """Write one YAML per planned agent. Returns the agents whose file did not parse."""
         self.out_dir.mkdir(parents=True, exist_ok=True)
         for old in self.out_dir.glob("*.yaml"):
             old.unlink()
+        broken = []
         for a in plan["agents"]:
             r = results.get(a["name"]) or AgentResult(a["name"])
             d: dict = {"name": a["name"], "agent_class": a["agent_class"]}
             if r.description or a.get("purpose"):
                 d["description"] = r.description or a.get("purpose")
-            if a.get("input_keys"):
-                d["input_keys"] = list(a["input_keys"])
+            keys, key_note = _key_fields(a, r.fields, self.catalog.syntax_for(a["agent_class"]))
+            d.update(keys)
             if a.get("output_key"):
                 d["output_key"] = a["output_key"]
             d.update(r.fields)
@@ -739,19 +948,23 @@ class Harness:
                 d.setdefault(k, v)
             if a.get("sub_agents"):
                 d["sub_agents"] = [{"name": s} for s in a["sub_agents"]]
-            head = ["# Generated by o2a_gen (playbook mode). Review before use.",
-                    f"# role: {a.get('role', '')}"]
-            if a.get("playbook_rule"):
-                head.append(f"# playbook: {a['playbook_rule']}")
-            if a.get("covers"):
-                head.append(f"# checks: {', '.join(map(str, a['covers']))}")
-            if a.get("procedure_lines"):
-                head.append(f"# procedure lines: {a['procedure_lines']}")
-            if a.get("sources"):
-                head.append(f"# sources: {', '.join(map(str, a['sources']))}")
-            head += [f"# TODO: {g}" for g in r.gaps]
-            (self.out_dir / f"{a['name']}.yaml").write_text(
-                "\n".join(head) + "\n" + dump_yaml(d), encoding="utf-8")
+            head = ["# Generated by o2a_gen (playbook mode). Review before use."]
+            head += _comment("role", a.get("role", ""))
+            head += _comment("playbook", a.get("playbook_rule", ""))
+            head += _comment("checks", ", ".join(map(str, a.get("covers") or [])))
+            head += _comment("procedure lines", a.get("procedure_lines", ""))
+            head += _comment("sources", ", ".join(map(str, a.get("sources") or [])))
+            head += _comment("note", key_note)
+            for g in r.gaps:
+                head += _comment("TODO", g)
+            text = "\n".join(head) + "\n" + dump_yaml(d)
+            try:
+                yaml.safe_load(text)
+            except yaml.YAMLError as e:
+                broken.append(a["name"])
+                r.warnings.append(f"{a['name']}: written YAML does not parse ({e})")
+            (self.out_dir / f"{a['name']}.yaml").write_text(text, encoding="utf-8")
+        return broken
 
     def code_findings(self, plan: dict):
         syntax = {a["agent_class"]: self.catalog.syntax_for(a["agent_class"]) for a in plan["agents"]}
@@ -804,7 +1017,6 @@ def run_playbook(client: LLMClient, cfg: GenConfig, catalog, procedure_text: str
     print(f"      {len(plan['agents'])} agents, root {plan['root']}")
 
     print("[6/7] Writing each agent ...", flush=True)
-    by = {a["name"]: a for a in plan["agents"]}
     with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
         results = {r.name: r for r in pool.map(
             lambda a: h.write_agent(plan, flow, dm, a), plan["agents"])}
@@ -814,40 +1026,57 @@ def run_playbook(client: LLMClient, cfg: GenConfig, catalog, procedure_text: str
     rounds = int(cfg.generation.get("review_rounds", 2))
     review: list[dict] = []
     findings = h.code_findings(plan)
+    replans = 0
     for rnd in range(rounds + 1):
         try:
             review = h.review(recipe, flow, dm, findings)
         except ValueError as e:
             print(f"      review failed: {e}")
             review = []
-        todo: dict[str, list[str]] = {}
-        for f in findings:
-            if f.severity == "ERROR":
-                for n in str(f.agent).split(","):
-                    if n in by:
-                        todo.setdefault(n, []).append(f"{f.code}: {f.message}")
-        for f in review:
-            if f["severity"] == "blocking":
-                n = plan["root"] if f["agent"] == "*" else f["agent"]
-                todo.setdefault(n, []).append(f"{f['problem']} Fix: {f.get('fix', '')}")
+        by = {a["name"]: a for a in plan["agents"]}
+        plan_todo, agent_todo = _sort_findings(findings, review, results, by, plan["root"])
         blocking = sum(f["severity"] == "blocking" for f in review)
         print(f"      round {rnd + 1}: {blocking} blocking finding(s), "
-              f"{sum(f.severity == 'ERROR' for f in findings)} code error(s)")
-        if not todo or rnd == rounds:
+              f"{sum(f.severity == 'ERROR' for f in findings)} code error(s), "
+              f"{len(plan_todo)} plan problem(s)")
+        if (not plan_todo and not agent_todo) or rnd == rounds:
             break
+        rewrite = set(agent_todo)
+        if plan_todo:
+            try:
+                new_plan = h.orchestrate(recipe, flow, dm, previous=plan,
+                                         problems="\n".join(f"- {x}" for x in plan_todo))
+                old = {a["name"]: a for a in plan["agents"]}
+                rewrite |= {a["name"] for a in new_plan["agents"] if old.get(a["name"]) != a}
+                plan, replans = new_plan, replans + 1
+                results = {n: r for n, r in results.items()
+                           if n in {a["name"] for a in plan["agents"]}}
+                print(f"      re-planned: {len(plan['agents'])} agents, "
+                      f"{len(rewrite)} to (re)write")
+            except ValueError as e:
+                print(f"      re-plan failed, keeping the plan: {e}")
+        by = {a["name"]: a for a in plan["agents"]}
+        names = [n for n in rewrite if n in by]
         with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
-            fixed = list(pool.map(lambda n: h.write_agent(plan, flow, dm, by[n],
-                                                          feedback="\n".join(todo[n])), todo))
+            fixed = list(pool.map(lambda n: h.write_agent(
+                plan, flow, dm, by[n], feedback="\n".join(agent_todo.get(n, []))), names))
         for r in fixed:
             results[r.name] = r
         h.emit(plan, results)
         findings = h.code_findings(plan)
 
-    h._save("review", {"findings": review, "code_findings": [asdict(f) for f in findings]})
+    by = {a["name"]: a for a in plan["agents"]}
+    h._save("review", {"findings": review, "code_findings": [asdict(f) for f in findings],
+                       "replans": replans})
     gaps = [{"agent": n, "gap": g} for n, r in results.items() for g in r.gaps]
+    input_gaps = list(dict.fromkeys(g for r in results.values() for g in r.input_gaps))
+    open_plan_issues = [f"{n}: {x}" for n, r in results.items() for x in r.plan_issues]
     (out_dir.parent / f"{out_dir.name}_placeholders.md").write_text(
-        "| Agent | Missing value |\n|---|---|\n"
-        + "\n".join(f"| {g['agent']} | {g['gap']} |" for g in gaps), encoding="utf-8")
+        "# Gaps in the inputs\n\n"
+        + ("\n".join(f"- {g}" for g in input_gaps) or "(none)")
+        + "\n\n# Values left empty\n\n| Agent | Missing value |\n|---|---|\n"
+        + "\n".join(f"| {g['agent']} | {' '.join(g['gap'].split())} |" for g in gaps),
+        encoding="utf-8")
     covered = {str(c): a["name"] for a in plan["agents"] for c in a.get("covers") or []}
     return {
         "mode": "playbook",
@@ -869,4 +1098,37 @@ def run_playbook(client: LLMClient, cfg: GenConfig, catalog, procedure_text: str
         "warnings": sum(f.severity == "WARN" for f in findings)
                     + sum(f["severity"] == "minor" for f in review),
         "blocking": sum(f["severity"] == "blocking" for f in review),
+        "replans": replans,
+        "input_gaps": input_gaps,
+        "open_plan_issues": open_plan_issues,
     }
+
+
+_PLAN_CODES = {"missing-agent", "root", "order", "never-written", "maybe-missing"}
+
+
+def _sort_findings(findings, review: list[dict], results: dict, by: dict, root: str):
+    """Split problems into plan-level ones (fixed by re-planning) and agent-level ones
+    (fixed by that agent's writer)."""
+    plan_todo: list[str] = []
+    agent_todo: dict[str, list[str]] = {}
+    for f in findings:
+        if f.severity != "ERROR":
+            continue
+        if f.code in _PLAN_CODES:
+            plan_todo.append(f"{f.agent}: {f.code}: {f.message}")
+            continue
+        for n in str(f.agent).split(","):
+            if n in by:
+                agent_todo.setdefault(n, []).append(f"{f.code}: {f.message}")
+    for f in review:
+        if f["severity"] != "blocking":
+            continue
+        text = f"{f['problem']} Fix: {f.get('fix', '')}"
+        if f.get("level") == "plan" or f["agent"] == "*" or f["agent"] not in by:
+            plan_todo.append(f"{f['agent']}: {text}")
+        else:
+            agent_todo.setdefault(f["agent"], []).append(text)
+    for n, r in results.items():
+        plan_todo += [f"{n} (writer): {x}" for x in r.plan_issues]
+    return list(dict.fromkeys(plan_todo)), agent_todo
