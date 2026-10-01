@@ -10,6 +10,8 @@ Source layout:
                   (`tables/` is accepted as an alias.)
       tools/      tool definitions: .yaml/.json ({name, ...} or list) or .md/.txt
       reference/  policies, guidelines, SOP excerpts (.md/.txt)
+      playbook/   how to build the workflow: logic checks, orchestration, data mapping
+                  (.md/.txt). When present, generation runs the playbook harness (harness.py).
 
 Existing agent YAMLs are deliberately NOT an input: generation must work from the
 procedure, tools, metadata and syntax alone. Existing YAMLs are only used afterwards,
@@ -31,14 +33,14 @@ from pathlib import Path
 
 import yaml
 
-KINDS = ("schema", "metadata", "tools", "reference")
+KINDS = ("schema", "metadata", "tools", "reference", "playbook")
 _MAX_CHARS = 7500  # stay under Corpus2Skill's default max_doc_chars (8000)
 
 
 @dataclass
 class CatalogDoc:
     id: str
-    kind: str      # schema | metadata | tool | reference
+    kind: str      # schema | metadata | tool | reference | playbook
     name: str
     source: str
     text: str
@@ -47,7 +49,7 @@ class CatalogDoc:
 def _doc_id(kind: str, name: str, part: int | str = 0) -> str:
     # Corpus2Skill truncates IDs to 16 chars, so keep them short and unique.
     h = hashlib.sha1(f"{kind}:{name}:{part}".encode()).hexdigest()[:13]
-    return f"{kind[0]}{h}"
+    return f"{'b' if kind == 'playbook' else kind[0]}{h}"   # 'p' is the procedure tree's
 
 
 def _mk(kind: str, name: str, source: Path, body: str, part: int | str = 0) -> CatalogDoc:
@@ -279,6 +281,10 @@ def collect_catalog(src: Path) -> list[CatalogDoc]:
         (src / "reference", lambda f: [d for p in sorted(f.glob("*"))
                                        if p.suffix.lower() in (".md", ".txt")
                                        for d in _split_text("reference", p.stem, p)]),
+        # How to build the workflow: logic checks, orchestration, data mapping.
+        (src / "playbook", lambda f: [d for p in sorted(f.glob("*"))
+                                      if p.suffix.lower() in (".md", ".txt", ".markdown")
+                                      for d in _split_text("playbook", p.stem, p)]),
     ]
     docs: list[CatalogDoc] = []
     for folder, load in sources:

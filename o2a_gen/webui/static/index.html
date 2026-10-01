@@ -41,7 +41,7 @@ h2 { font-size: 15px; margin: 0 0 12px; }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
 .dot.ok { background: var(--ok); } .dot.bad { background: var(--err); }
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); padding: 18px; margin-bottom: 16px; }
-.grid4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.grid4 { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; }
 .grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 @media (max-width: 900px) { .grid4, .grid3 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
@@ -148,6 +148,11 @@ select { font: inherit; padding: 6px 8px; border-radius: 8px; border: 1px solid 
         <div class="t">Agent syntax <span class="req">required</span></div>
         <div class="h">The agent classes and their YAML syntax</div><ul></ul>
       </div>
+      <div class="drop" data-key="playbook" data-multi>
+        <input type="file" multiple accept=".md,.txt,.markdown">
+        <div class="t">Playbook <span class="req">recommended</span></div>
+        <div class="h">How to check the logic, orchestrate and map data</div><ul></ul>
+      </div>
     </div>
     <details style="margin-top:14px">
       <summary>Options and optional files</summary>
@@ -192,6 +197,7 @@ select { font: inherit; padding: 6px 8px; border-radius: 8px; border: 1px solid 
       <button id="zipBtn">Download all (.zip)</button>
     </div>
     <div class="stats" id="stats"></div>
+    <div class="row hidden" id="notesRow" style="margin-bottom:12px;gap:8px;flex-wrap:wrap"><span class="muted">Build notes</span></div>
     <div class="results">
       <div class="tree" id="tree"></div>
       <div class="viewer">
@@ -210,7 +216,7 @@ select { font: inherit; padding: 6px 8px; border-radius: 8px; border: 1px solid 
 
 <script>
 const $ = (s, el = document) => el.querySelector(s);
-const files = { procedure: [], tools: [], metadata: [], syntax: [], reference: [], compare: [] };
+const files = { procedure: [], tools: [], metadata: [], syntax: [], playbook: [], reference: [], compare: [] };
 const REQUIRED = ["procedure", "tools", "metadata", "syntax"];
 let keysOk = false, current = null, poll = null, selected = null, lastYaml = "";
 
@@ -254,7 +260,8 @@ function refreshReady() {
   const running = current && current.status === "running";
   $("#goBtn").disabled = !!missing.length || !keysOk || running;
   $("#readyText").textContent = running ? "A run is in progress." : missing.length
-    ? `Still needed: ${missing.join(", ")}. (Right-click a box to clear it.)` : keysOk ? "Ready." : "API keys are not set.";
+    ? `Still needed: ${missing.join(", ")}. (Right-click a box to clear it.)` : !keysOk ? "API keys are not set."
+    : files.playbook.length ? "Ready: the playbook will drive the build." : "Ready. Without a playbook the older step-by-step generator is used.";
 }
 
 $("#goBtn").addEventListener("click", async () => {
@@ -337,6 +344,11 @@ function renderResults() {
   roots.forEach(r => walk(r, 0));
   j.agents.forEach(a => walk(a, 0));
   $("#tree").innerHTML = rows.join("");
+  const nr = $("#notesRow");
+  nr.classList.toggle("hidden", !(j.notes || []).length);
+  nr.innerHTML = `<span class="muted">Build notes</span>` + (j.notes || []).map(n =>
+    `<button class="sm note-btn" data-file="${esc(n)}">${esc(n)}</button>`).join("");
+  nr.querySelectorAll(".note-btn").forEach(el => el.addEventListener("click", () => show(el.dataset.file)));
   document.querySelectorAll(".node").forEach(el => el.addEventListener("click", () => show(el.dataset.file)));
   show(selected && j.files.includes(selected) ? selected : (roots[0] || j.agents[0]).file);
 

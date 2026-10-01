@@ -36,6 +36,7 @@ KIND_FOLDERS = {
     "metadata": ("data-metadata", "Database tables, columns and connections."),
     "tool": ("tools", "Tools agents can call."),
     "reference": ("reference-docs", "Policies, guidelines and procedure references."),
+    "playbook": ("playbook", "How to build the workflow: logic checks, orchestration, data mapping."),
 }
 
 

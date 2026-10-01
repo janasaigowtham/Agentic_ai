@@ -41,6 +41,23 @@ STAGES = [
     ("write", "Save YAMLs", "[5/6]"),
     ("validate", "Check", "[6/6]"),
 ]
+# Stages when a playbook is given (o2a_gen.harness).
+PLAYBOOK_STAGES = [
+    ("compile", "Compile inputs into skills", None),
+    ("procedure", "Compile procedure into skills", "[1/7]"),
+    ("recipe", "Read the playbook", "[2/7]"),
+    ("logic", "Understand the review logic", "[3/7]"),
+    ("datamap", "Map data to tools and metadata", "[4/7]"),
+    ("plan", "Plan the agents", "[5/7]"),
+    ("write", "Write each agent", "[6/7]"),
+    ("review", "Review and fix", "[7/7]"),
+]
+# Build notes a playbook run writes next to the YAMLs (shown and zipped).
+NOTE_FILES = ("flow.md", "data_map.md", "plan.md", "placeholders.md")
+
+
+def _stages(job: dict) -> list:
+    return PLAYBOOK_STAGES if (job.get("inputs") or {}).get("playbook") else STAGES
 
 app = FastAPI(title="o2a_gen")
 _jobs: dict[str, dict] = {}
@@ -70,9 +87,10 @@ def _job_view(job: dict, log_tail: int = 400) -> dict:
     log = job["dir"] / "log.txt"
     lines = log.read_text(encoding="utf-8", errors="replace").splitlines() if log.exists() else []
     d["log"] = lines[-log_tail:]
-    d["stages"] = [{"id": s, "label": label} for s, label, _ in STAGES]
+    d["stages"] = [{"id": s, "label": label} for s, label, _ in _stages(job)]
     out = job["dir"] / "out" / "workflow"
     d["files"] = sorted(p.name for p in out.glob("*.yaml")) if out.exists() else []
+    d["notes"] = [n for n in NOTE_FILES if (job["dir"] / "out" / f"workflow_{n}").exists()]
     d["agents"] = []
     for name in d["files"]:
         try:
@@ -113,7 +131,7 @@ def _run(job: dict) -> None:
             for line in proc.stdout:
                 log.write(line)
                 log.flush()
-                for sid, _, marker in STAGES:
+                for sid, _, marker in _stages(job):
                     if marker and line.strip().startswith(marker):
                         job["stage"] = sid
             code = proc.wait()
@@ -175,6 +193,7 @@ def create_job(
     tools: list[UploadFile] = File(...),
     metadata: list[UploadFile] = File(...),
     reference: list[UploadFile] = File(default=[]),
+    playbook: list[UploadFile] = File(default=[]),
     compare: list[UploadFile] = File(default=[]),
     prefix: str = Form(""),
     pipeline_inputs: str = Form(""),
@@ -192,6 +211,7 @@ def create_job(
         "tools": _save(tools, jd / "catalog_src" / "tools"),
         "metadata": _save(metadata, jd / "catalog_src" / "metadata"),
         "reference": _save(reference, jd / "catalog_src" / "reference"),
+        "playbook": _save(playbook, jd / "catalog_src" / "playbook"),
         "compare": _save([f for f in compare if f.filename.lower().endswith((".yaml", ".yml"))],
                          jd / "compare"),
     }
@@ -250,7 +270,13 @@ def cancel(jid: str):
 
 @app.get("/api/jobs/{jid}/files/{name}")
 def get_file(jid: str, name: str):
-    p = _job(jid)["dir"] / "out" / "workflow" / _safe_name(name)
+    name = _safe_name(name)
+    if name in NOTE_FILES:
+        p = _job(jid)["dir"] / "out" / f"workflow_{name}"
+        if not p.is_file():
+            raise HTTPException(404, "no such file")
+        return PlainTextResponse(p.read_text(encoding="utf-8"))
+    p = _job(jid)["dir"] / "out" / "workflow" / name
     if not p.is_file():
         raise HTTPException(404, "no such file")
     return PlainTextResponse(p.read_text(encoding="utf-8"))
@@ -264,9 +290,8 @@ def download(jid: str):
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         for p in sorted((out / "workflow").glob("*.yaml")):
             z.write(p, f"workflow/{p.name}")
-        for extra in ("workflow_report.json", "workflow_steps.json"):
-            if (out / extra).exists():
-                z.write(out / extra, extra)
+        for extra in sorted(out.glob("workflow_*.json")) + sorted(out.glob("workflow_*.md")):
+            z.write(extra, extra.name)
     buf.seek(0)
     name = f"o2a_workflow_{job['options'].get('prefix') or jid}.zip"
     return StreamingResponse(buf, media_type="application/zip",

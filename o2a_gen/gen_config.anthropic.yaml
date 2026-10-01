@@ -42,4 +42,7 @@ generation:
   pipeline_inputs: []               # session keys the caller supplies; empty = from the procedure
   navigate_max_turns: 12
   compile_procedure: true
+  # Playbook mode (when a playbook is uploaded): review/fix rounds and effort per stage.
+  review_rounds: 2
+  stage_effort: {recipe: high, logic: high, datamap: high, orchestrate: high, write: medium, review: high}
   agent_templates: {}

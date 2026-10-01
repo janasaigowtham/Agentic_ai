@@ -10,6 +10,7 @@ from o2a_gen.compare import compare_dirs
 from o2a_gen.config import GenConfig
 from o2a_gen.emit import write_plan
 from o2a_gen.ground import ground_plan
+from o2a_gen.harness import has_playbook, run_playbook
 from o2a_gen.llm import LLMClient
 from o2a_gen.navigator import Catalog, CombinedCatalog
 from o2a_gen.plan import build_plan
@@ -51,9 +52,11 @@ def generate(procedure_path: Path, out_dir: Path, cfg: GenConfig, client: LLMCli
     out_dir.mkdir(parents=True, exist_ok=True)
 
     text = load_procedure_text(procedure_path)
+    playbook_mode = has_playbook(catalog)
     proc_tree, browse, outline = None, catalog, ""
     if cfg.generation.get("compile_procedure", True):
-        print(f"[1/6] Compiling procedure {procedure_path.name} into a skill tree ...")
+        print(f"[1/{7 if playbook_mode else 6}] Compiling procedure {procedure_path.name} "
+              "into a skill tree ...")
         proc_dir = out_dir.parent / f"{out_dir.name}_procedure"
         proc_tree = build_procedure_tree(
             client, text, procedure_path.stem, proc_dir, models=cfg.models,
@@ -65,6 +68,20 @@ def generate(procedure_path: Path, out_dir: Path, cfg: GenConfig, client: LLMCli
                              f"{s.summary}" for s in proc_tree.root.walk() if s.level > 0)
         print(f"      {sum(1 for _ in proc_tree.root.walk()) - 1} sections, "
               f"{len(proc_tree.docs)} documents -> {proc_dir}")
+
+    if playbook_mode:
+        report = run_playbook(client, cfg, browse, text, out_dir, outline=outline,
+                              workers=workers)
+        report["procedure"] = procedure_path.name
+        report["procedure_tree"] = ({"dir": str(proc_tree.out_dir),
+                                     "sections": sum(1 for _ in proc_tree.root.walk()) - 1,
+                                     "documents": len(proc_tree.docs)} if proc_tree else None)
+        report["llm_usage"] = getattr(getattr(client, "usage", None), "as_dict", lambda: {})()
+        if compare_with is not None:
+            print(f"[+] Comparing with existing YAMLs in {compare_with} ...")
+            report["comparison"] = compare_dirs(Path(compare_with), out_dir)
+        (out_dir.parent / f"{out_dir.name}_report.json").write_text(json.dumps(report, indent=2))
+        return report
 
     print("[2/6] Extracting steps (one long answer; can take several minutes) ...")
     proc = extract_procedure(client, text, model=cfg.model("extract"),

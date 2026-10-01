@@ -29,6 +29,30 @@ written from, plus a zip of everything. Existing YAMLs can be added under *Optio
 compared only after generation. Each run is kept in `runs/<id>/` (git-ignored). The UI uses
 `gen_config.anthropic.yaml`; set `O2A_GEN_CONFIG` to use another config.
 
+### Playbook mode (recommended)
+
+Upload a **playbook** (Markdown) with the other inputs. It says how to build the workflow:
+how to check the logic, how to orchestrate the agents and how to map data from tools. When
+a playbook is given, generation runs `harness.py` instead of the step-by-step generator:
+
+| Stage | Applies | Saves (next to `workflow/`) |
+|---|---|---|
+| Recipe | the playbook, as a build checklist | `workflow_recipe.json` |
+| Logic | the playbook's logic rules to the procedure | `workflow_flow.json` / `.md` |
+| Data map | its data rules to the tools and metadata | `workflow_data_map.json` / `.md` |
+| Orchestrate | its roles and orchestration rules | `workflow_plan.json` / `.md` |
+| Write | one writer per agent: plan entry, class syntax, sources | `workflow/*.yaml` |
+| Review | code checks + a fresh model review; blocking problems go back to the writer | `workflow_review.json`, `workflow_placeholders.md` |
+
+The playbook and the agent syntax are the system prompt of every call (cached). Between
+stages, code checks what came back and sends problems back to the model: classes must be
+in the syntax, cited procedure lines must exist, every mapped tool and field must appear
+in the tools or metadata, every check in the flow must be covered by an agent, routes and
+sub-agents must exist, and every key an agent reads must be written by some agent or be a
+pipeline input. Nothing in the code is specific to a procedure, tool or agent class. The
+build notes (`flow.md`, `data_map.md`, `plan.md`, `placeholders.md`) appear in the web UI
+under the stats, and in the zip.
+
 ### Claude cost settings (`gen_config.anthropic.yaml`)
 
 - **Prompt caching.** Every system prompt is marked for caching, so repeated calls with the
