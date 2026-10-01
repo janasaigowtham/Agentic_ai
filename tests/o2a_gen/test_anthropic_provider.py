@@ -214,10 +214,10 @@ def test_skill_tree_cards_go_through_one_batch_and_are_cached(tmp_path):
     assert len(batches) == 1                                             # unchanged: no calls
 
 
-def test_anthropic_config_enables_batch_and_low_compile_effort():
+def test_anthropic_config_has_batch_off_and_low_compile_effort():
     from pathlib import Path
 
     from o2a_gen.config import load_config
     cfg = load_config(Path(__file__).resolve().parents[2] / "o2a_gen" / "gen_config.anthropic.yaml")
-    assert cfg.llm["batch"] == "o2a_gen.providers.anthropic_provider:batch"
+    assert "batch" not in cfg.llm              # off: batches can queue for an hour or more
     assert cfg.catalog["effort"] == "low"

@@ -6,8 +6,10 @@ llm:
   provider: callable
   chat: o2a_gen.providers.anthropic_provider:chat
   embed: o2a_gen.providers.deepinfra_provider:embed
-  batch: o2a_gen.providers.anthropic_provider:batch   # Batch API (half price) for compile calls
-  batch_min_requests: 5             # smaller groups are sent as normal calls, no batch wait
+  # Batch API is off: batches can queue for an hour or more. To turn it back on (half price
+  # for compile calls, slower), uncomment these two lines.
+  # batch: o2a_gen.providers.anthropic_provider:batch
+  # batch_min_requests: 5
   max_concurrency: 8
 
 models:
